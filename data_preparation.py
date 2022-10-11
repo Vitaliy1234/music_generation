@@ -7,6 +7,16 @@ import music21
 from music21 import corpus, note, chord
 
 
+BAR_START = 'BAR_START'
+BAR_END = 'BAR_END'
+TRACK_START = 'TRACK_START'
+TRACK_END = 'TRACK_END'
+NOTE_ON = 'NOTE_ON'
+NOTE_OFF = 'NOTE_OFF'
+TIME_SHIFT = 'TIME_SHIFT'
+INSTRUMENT = 'INST'
+
+
 def prepare_data(section, run_id, music_name):
     list_of_files, bach_parser = get_bach_chorales()
 
@@ -74,13 +84,16 @@ def extract_notes(file_list, parser, store_folder, mode='build'):
                 for elem_part in part:
                     if isinstance(elem_part, music21.instrument.Instrument):
                         # print(f'Instrument: {elem_part}')
-                        track_txt.append(f'INST={elem_part}')
+                        track_txt.append(f'{INSTRUMENT}={elem_part}')
                         pass
                     elif isinstance(elem_part, music21.stream.base.Measure):
                         # print(f'Measure: {elem_part}')
-                        track_txt.append('BAR_START')
+                        print(f'Measure num={elem_part.measureNumber}')
+
+                        track_txt.append(BAR_START)
 
                         bar_txt = []
+                        bar_dict = {}
                         # read measure
                         for elem_measure in elem_part:
                             if isinstance(elem_measure, music21.key.Key):
@@ -94,20 +107,21 @@ def extract_notes(file_list, parser, store_folder, mode='build'):
                             elif isinstance(elem_measure, music21.note.Note):
                                 if elem_measure.isRest:
                                     print('rest')
-                                    bar_txt.append(f'TIME_SHIFT={elem_measure.duration.quarterLength}')
+                                    bar_txt.append(f'{TIME_SHIFT}={elem_measure.duration.quarterLength}')
                                 else:
                                     # print(f'duration: {elem_measure.duration}')
                                     # print(f'Name: {elem_measure.nameWithOctave}')
 
-                                    bar_txt.append(f'NOTE_ON={elem_measure.nameWithOctave}')
-                                    bar_txt.append(f'TIME_SHIFT={elem_measure.duration.quarterLength}')
-                                    bar_txt.append(f'NOTE_OFF={elem_measure.nameWithOctave}')
+                                    bar_txt.append(f'{NOTE_ON}={elem_measure.nameWithOctave}')
+                                    bar_txt.append(f'{TIME_SHIFT}={elem_measure.duration.quarterLength}')
+                                    bar_txt.append(f'{NOTE_OFF}={elem_measure.nameWithOctave}')
 
                             else:
                                 # print(type(elem_measure))
                                 pass
-                        track_txt.append(bar_txt)
-                        track_txt.append('BAR_END')
+                        bar_dict[elem_part.measureNumber] = bar_txt
+                        track_txt.append(bar_dict)
+                        track_txt.append(BAR_END)
                     else:
                         # print(type(elem_part))
                         pass
