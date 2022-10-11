@@ -24,11 +24,10 @@ def prepare_data(section, run_id, music_name):
                                                run_id=run_id,
                                                music_name=music_name)
 
-    notes, durations = extract_notes(file_list=list_of_files,
-                                     parser=bach_parser,
-                                     store_folder=store_folder)
-    print(notes)
-    print(durations)
+    music_txt = extract_notes(file_list=list_of_files,
+                              parser=bach_parser,)
+    # print(notes)
+    # print(durations)
 
 
 def get_bach_chorales():
@@ -62,21 +61,23 @@ def create_dir_tree(section, run_id, music_name):
     return store_folder, run_folder
 
 
-def extract_notes(file_list, parser, store_folder, mode='build'):
+def extract_notes(file_list, parser, mode='build'):
     """
     Extract notes names and durations from score
     :param file_list:
     :param parser:
-    :param store_folder:
     :param mode:
     :return notes, durations: list of notes names and list of durations
     """
     if mode == 'build':
+        pieces = []
 
-        for i, file in enumerate(file_list):
+        for i, file in enumerate(file_list[:5]):
             print(i + 1, "Parsing %s" % file)
             original_score = parser.parse(file)
-            original_score.show()
+            # original_score.show()
+            cur_piece = {}
+            track_list = []
 
             for part in original_score.parts:
                 track_txt = []
@@ -88,7 +89,7 @@ def extract_notes(file_list, parser, store_folder, mode='build'):
                         pass
                     elif isinstance(elem_part, music21.stream.base.Measure):
                         # print(f'Measure: {elem_part}')
-                        print(f'Measure num={elem_part.measureNumber}')
+                        # print(f'Measure num={elem_part.measureNumber}')
 
                         track_txt.append(BAR_START)
 
@@ -97,13 +98,15 @@ def extract_notes(file_list, parser, store_folder, mode='build'):
                         # read measure
                         for elem_measure in elem_part:
                             if isinstance(elem_measure, music21.key.Key):
-                                # print(f'Key: {elem_measure}')
-                                pass
+                                print(f'Key: {elem_measure.asKey()}')
+                                cur_piece['Key'] = str(elem_measure.asKey())
                             elif isinstance(elem_measure, music21.meter.base.TimeSignature):
                                 print(f'Beat duration: {elem_measure.beatDuration}')
                                 print(f'Beat count: {elem_measure.beatCount}')
                                 print(f'Time signature: {elem_measure}')
-                                pass
+                                cur_piece['Beat duration'] = str(elem_measure.beatDuration.quarterLength)
+                                cur_piece['Beat count'] = elem_measure.beatCount
+                                cur_piece['Time signature'] = elem_measure
                             elif isinstance(elem_measure, music21.note.Note):
                                 if elem_measure.isRest:
                                     print('rest')
@@ -111,10 +114,11 @@ def extract_notes(file_list, parser, store_folder, mode='build'):
                                 else:
                                     # print(f'duration: {elem_measure.duration}')
                                     # print(f'Name: {elem_measure.nameWithOctave}')
+                                    note_list = [f'{NOTE_ON}={elem_measure.nameWithOctave}',
+                                                 f'{TIME_SHIFT}={elem_measure.duration.quarterLength}',
+                                                 f'{NOTE_OFF}={elem_measure.nameWithOctave}']
 
-                                    bar_txt.append(f'{NOTE_ON}={elem_measure.nameWithOctave}')
-                                    bar_txt.append(f'{TIME_SHIFT}={elem_measure.duration.quarterLength}')
-                                    bar_txt.append(f'{NOTE_OFF}={elem_measure.nameWithOctave}')
+                                    bar_txt.append({elem_measure.beat: note_list})
 
                             else:
                                 # print(type(elem_measure))
@@ -125,9 +129,13 @@ def extract_notes(file_list, parser, store_folder, mode='build'):
                     else:
                         # print(type(elem_part))
                         pass
+                track_list.append(track_txt)
 
-                print(track_txt)
+            print(track_list)
+            cur_piece['MUSIC'] = track_list
+            pieces.append(cur_piece)
 
+        print(pieces[0])
         # save notes and durations
     #     with open(os.path.join(store_folder, 'notes'), 'wb') as notes_file:
     #         pickle.dump(notes, notes_file)
@@ -139,7 +147,19 @@ def extract_notes(file_list, parser, store_folder, mode='build'):
     #     with open(os.path.join(store_folder, 'durations'), 'rb') as durations_file:
     #         durations = pickle.load(durations_file)
 
-            return None, None
+    return pieces
+
+
+def piece_to_str(piece):
+    """
+    Convert piece dict in string
+    :param piece: piece
+    :return: string representation of piece dict
+    """
+    piece_str = ['PIECE_START', 'TRACK_START']
+
+    for cur_track in piece['MUSIC']:
+        pass
 
 
 if __name__ == '__main__':
