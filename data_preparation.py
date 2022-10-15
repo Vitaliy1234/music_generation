@@ -147,7 +147,7 @@ def extract_notes(file_list, parser, mode='build'):
     #     with open(os.path.join(store_folder, 'durations'), 'rb') as durations_file:
     #         durations = pickle.load(durations_file)
 
-    return pieces
+        return pieces
 
 
 def piece_to_str(piece):
