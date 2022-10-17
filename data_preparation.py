@@ -1,8 +1,6 @@
 import os
 from pathlib import Path
 
-import pickle
-
 import music21
 from music21 import corpus, note, chord
 
