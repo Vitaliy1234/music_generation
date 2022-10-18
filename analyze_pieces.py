@@ -12,10 +12,16 @@ from data_preparation import get_bach_chorales, extract_notes, NOTE_ON, TIME_SHI
 
 
 PITCHES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'B-', 'B']
+NOTES = [4, 2, 1, 0.5, 0.25, 3, 1.5, 0.75, 0.375, 1.333, 0.667, 0.167]
 
 
 def get_pitch_name_without_octave(pitch):
     return ''.join(pitch.split('=')[1][:-1])
+
+
+def get_pitch_height(pitch):
+    return int(pitch.split('=')[1][-1]) * len(PITCHES) + \
+           PITCHES.index(get_pitch_name_without_octave(pitch))
 
 
 def pitch_count(sample):
@@ -91,13 +97,16 @@ def pitch_class_transition_matrix(sample):
 
 
 def pitch_range(sample):
-
+    """
+    Counts the interval between the lowest and the highest pitches
+    :param sample: music
+    :return: number of semi-tons between the lowest and the highest pitches
+    """
     lowest_pitch = 999
     highest_pitch = 0
     for elem in sample:
         if NOTE_ON in elem:
-            cur_pitch_high = int(elem.split('=')[1][-1]) * len(PITCHES) + \
-                             PITCHES.index(get_pitch_name_without_octave(elem))
+            cur_pitch_high = get_pitch_height(elem)
 
             if cur_pitch_high > highest_pitch:
                 highest_pitch = cur_pitch_high
@@ -108,22 +117,85 @@ def pitch_range(sample):
 
 
 def average_pitch_interval(sample):
-    pass
+    """
+    Counts average value of the interval between two consecutive pitches in semi-tones
+    :param sample: music
+    :return: Average value of the interval between two consecutive pitches in semi-tones
+    """
+    prev_pitch = ''
+
+    sum_interval = 0
+    count_intervals = 0
+
+    for elem in sample:
+        if NOTE_ON in elem:
+            cur_pitch = get_pitch_height(elem)
+
+            if prev_pitch == '':
+                prev_pitch = cur_pitch
+                continue
+
+            sum_interval += abs(cur_pitch - prev_pitch)
+            count_intervals += 1
+            prev_pitch = cur_pitch
+
+    return sum_interval / count_intervals
 
 
 def note_count(sample):
-    pass
+    """
+    Counts number of used notes
+    :param sample: music
+    :return: number of used notes
+    """
+    notes = set()
+
+    for elem in sample:
+        if TIME_SHIFT in elem:
+            notes.add(elem)
+
+    return len(notes)
 
 
 def average_inter_onset_interval(sample):
-    pass
+    """
+    Counts average inter onset interval (time between consecutive notes)
+    :param sample: music
+    :return: average inter onset interval
+    """
+    sum_time_interval = 0
+    count_time_interval = 0
+
+    for elem in sample:
+        if TIME_SHIFT in elem:
+            sum_time_interval += float(elem.split('=')[1])
+            count_time_interval += 1
+
+    return sum_time_interval / count_time_interval
 
 
 def note_length_histogram(sample):
-    pass
+    # notes_dict = {cur_note: 0 for cur_note in NOTES}
+    notes_dict = defaultdict(float)
+
+    for elem in sample:
+        if TIME_SHIFT in elem:
+            notes_dict[float(elem.split('=')[1])] += 1
+
+    pitches_df = pd.DataFrame(notes_dict.values(), index=notes_dict.keys(), columns=['note_count'])
+    pitches_df.sort_index(inplace=True)
+
+    plt.style.use('seaborn')
+    plt.figure(figsize=(6, 5))
+    plt.title('Nite class histogram')
+    sns.barplot(x=pitches_df.index, y=pitches_df['note_count'])
+    plt.xlabel('Note name')
+    plt.ylabel('Note count')
+    plt.savefig('note_class_histogram.jpg')
 
 
 def note_length_transition_matrix(sample):
+    notes_arr = np.zeros((len(NOTES), len(NOTES)))
     pass
 
 
@@ -133,11 +205,11 @@ def compute_metrics(sample):
     pitch_class_histogram(sample)
     pitch_class_transition_matrix(sample)
     print(f'Pitch range: {pitch_range(sample)}')
-    average_pitch_interval(sample)
+    print(f'Average pitch interval: {average_pitch_interval(sample)}')
 
     # compute rhythm-based metrics
-    note_count(sample)
-    average_inter_onset_interval(sample)
+    print(f'Number of used notes: {note_count(sample)}')
+    print(f'Average inter-onset interval: {average_inter_onset_interval(sample)}')
     note_length_histogram(sample)
     note_length_transition_matrix(sample)
 
