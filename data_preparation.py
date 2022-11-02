@@ -5,14 +5,17 @@ import music21
 from music21 import corpus, note, chord
 
 
-BAR_START = 'BAR_START'
-BAR_END = 'BAR_END'
-TRACK_START = 'TRACK_START'
-TRACK_END = 'TRACK_END'
-NOTE_ON = 'NOTE_ON'
-NOTE_OFF = 'NOTE_OFF'
-TIME_SHIFT = 'TIME_SHIFT'
-INSTRUMENT = 'INST'
+BAR_START = '<BAR_START>'
+BAR_END = '<BAR_END>'
+TRACK_START = '<TRACK_START>'
+TRACK_END = '<TRACK_END>'
+NOTE_ON = '<NOTE_ON>'
+NOTE_OFF = '<NOTE_OFF>'
+TIME_SHIFT = '<TIME_SHIFT>'
+INSTRUMENT = '<INST>'
+
+PIECE_START = '<PIECE_START>'
+PIECE_END = '<PIECE_END>'
 
 
 def get_bach_chorales():
@@ -64,7 +67,7 @@ def extract_notes(file_list, parser, mode='build'):
             original_score = parser.parse(file)
             # original_score.show()
             cur_piece = {}
-            cur_piece_str = ['PIECE_START']
+            cur_piece_str = [PIECE_START]
             piece_key = ''
             piece_time_signature = None
             track_list = []
@@ -157,7 +160,7 @@ def extract_notes(file_list, parser, mode='build'):
             cur_piece['MUSIC'] = track_list
             pieces.append(cur_piece)
 
-            cur_piece_str.append('PIECE_END')
+            cur_piece_str.append(PIECE_END)
 
             pieces_str.append(cur_piece_str)
 
@@ -182,7 +185,7 @@ def piece_to_str(piece):
     :param piece: piece
     :return: string representation of piece dict
     """
-    piece_str = ['PIECE_START']
+    piece_str = [PIECE_START]
 
     for music_elem in piece['MUSIC']:
         if music_elem == TRACK_START:
@@ -211,13 +214,13 @@ def prepare_data(section, run_id, music_name):
 
     for piece in piece_list_temp_repr:
         for elem in piece:
-            if elem == 'PIECE_START' \
+            if elem == PIECE_START \
                     or elem == TRACK_START \
                     or INSTRUMENT in elem \
                     or elem == BAR_START \
                     or elem == BAR_END \
                     or elem == TRACK_END \
-                    or elem == 'PIECE_START':
+                    or elem == PIECE_START:
                 print()
                 print(elem)
             else:
