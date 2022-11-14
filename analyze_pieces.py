@@ -1,3 +1,4 @@
+import os
 from collections import defaultdict
 
 import matplotlib.pyplot as plt
@@ -6,7 +7,9 @@ import seaborn as sns
 
 import pandas as pd
 
-from data_preparation import get_bach_chorales, extract_notes, NOTE_ON, NOTE_OFF, TIME_SHIFT
+from data_preparation import get_bach_chorales, extract_notes, NOTE_ON, NOTE_OFF, TIME_SHIFT, extract_notes_from_files
+
+from music21 import converter
 
 
 PITCHES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'B-', 'B']
@@ -300,17 +303,23 @@ def compute_metrics(sample):
     # calculate rhythm-based metrics
     print(f'Number of used notes: {note_count(sample)}')
     print(f'Average inter-onset interval: {average_inter_onset_interval(sample)}')
-    # note_length_histogram(sample)
-    # note_length_transition_matrix(sample)
+    note_length_histogram(sample)
+    note_length_transition_matrix(sample)
 
 
 if __name__ == '__main__':
-    file_list, parser = get_bach_chorales()
+    # file_list, parser = get_bach_chorales()
+    #
+    # pieces = extract_notes(file_list=file_list,
+    #                        parser=parser,
+    #                        )
+
+    # compute_metrics(pieces)
+
+    file_list = [os.path.join('generated_data', f'generated_music_{i}.mid') for i in range(200)]
 
     pieces = extract_notes(file_list=file_list,
-                           parser=parser,
+                           parser=converter,
                            )
-
-    print(pieces[0])
 
     compute_metrics(pieces)
