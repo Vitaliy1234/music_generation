@@ -1,5 +1,6 @@
 import os
 from helpers import logging
+from pathlib import Path
 
 from transformers import GPT2LMHeadModel
 from transformers import PreTrainedTokenizerFast
@@ -104,13 +105,17 @@ def sample(priming_sample_file, result_file):
 
 
 if __name__ == '__main__':
-    filename = os.path.join('data', 'gm_choral_prel.mid')
+    filename = os.path.join('data', 'canon.mid')
     logger.info('Start converting midi to text')
     text_repr = extract_notes([filename], converter)
     logger.info('Midi converted to text')
 
     split_path = os.path.split(filename)
+
+    Path('text_representations').mkdir(exist_ok=True)
+
     txt_file = f"{split_path[1].split('.')[0]}.txt"
+    txt_file = os.path.join('text_representations', txt_file)
 
     with open(txt_file, 'w') as hfile:
         for piece in text_repr:
@@ -119,5 +124,9 @@ if __name__ == '__main__':
     logger.info(f'Text representation of melody were saved in {txt_file}')
     logger.info('Start generation...')
     midi_file = f"{split_path[1].split('.')[0]}.mid"
+
+    Path('generations').mkdir(exist_ok=True)
+    midi_file = os.path.join('generations', midi_file)
+
     sample(txt_file, midi_file)
     logger.info(f'Generation finished! Saved in {midi_file}')
