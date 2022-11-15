@@ -61,9 +61,9 @@ def preprocess_score(score):
     meta_info = {}
     track_list = []
 
-    for part in score.parts:
+    for part_index, part in enumerate(score.parts):
         cur_piece_str.append(TRACK_START)
-        cur_track_str = preprocess_track(part, meta_info)
+        cur_track_str = preprocess_track(part, part_index, meta_info)
         cur_piece_str.extend(cur_track_str)
         cur_piece_str.append(TRACK_END)
 
@@ -75,14 +75,15 @@ def preprocess_score(score):
     return cur_piece_str
 
 
-def preprocess_track(track, meta_info):
-    track_txt = [f'{INSTRUMENT}=0', 'DENSITY=1']
+def preprocess_track(track, track_index, meta_info):
+    track_txt = [f'{INSTRUMENT}={track_index}', 'DENSITY=1']
     # read current track
     for elem_part in track:
         if isinstance(elem_part, music21.instrument.Instrument):
             if str(elem_part) not in INSTR_DICT.keys():
                 INSTR_DICT[str(elem_part)] = len(list(INSTR_DICT.keys()))
             # track_txt.append(f'{INSTRUMENT}={INSTR_DICT[str(elem_part)]}')
+            # track_txt.append('DENSITY=1')
         elif isinstance(elem_part, music21.stream.base.Measure):
             track_txt.append(BAR_START)
             cur_bar_info = preprocess_bar(elem_part)
@@ -113,7 +114,7 @@ def preprocess_bar(bar):
     bar_txt = []
     bar_dict = {}
 
-    prev_beat = 1.0
+    prev_offset = 0.0
     prev_duration = 0.0
     # read measure
     for elem_measure in bar:
@@ -126,25 +127,33 @@ def preprocess_bar(bar):
 
         elif isinstance(elem_measure, music21.note.Note):
             if elem_measure.isRest:
-                bar_txt.append(f'{TIME_SHIFT}={elem_measure.duration.quarterLength * 4}')
+                bar_txt.append(f'{TIME_SHIFT}={float(elem_measure.duration.quarterLength) * 4}')
             else:
                 note_list = [f'{NOTE_ON}={elem_measure.pitch.midi}',
-                             f'{TIME_SHIFT}={elem_measure.duration.quarterLength * 4}',
+                             f'{TIME_SHIFT}={float(elem_measure.duration.quarterLength) * 4}',
                              f'{NOTE_OFF}={elem_measure.pitch.midi}']
 
                 cur_elem_duration = elem_measure.duration.quarterLength
 
-                if elem_measure.beat - prev_duration > prev_beat:
-                    shift_duration = elem_measure.beat - prev_duration - prev_beat
+                if elem_measure.offset - prev_offset > prev_duration:
+                    shift_duration = elem_measure.offset - prev_duration - prev_offset
 
-                    bar_txt.append(f'{TIME_SHIFT}='
-                                   f'{shift_duration * 4}')
+                    if bar_txt and False:
+                        note_off_token = bar_txt.pop()
+                        prev_time_shift = bar_txt.pop()
+
+                        bar_txt.append(f'{TIME_SHIFT}='
+                                       f'{shift_duration * 4 + float(prev_time_shift.split("=")[1])}')
+                        bar_txt.append(note_off_token)
+                    else:
+                        bar_txt.append(f'{TIME_SHIFT}='
+                                       f'{shift_duration * 4}')
 
                     prev_duration += shift_duration
 
                 bar_txt.extend(note_list)
                 prev_duration += cur_elem_duration
-                prev_beat += elem_measure.beat
+                prev_offset = elem_measure.offset
 
         else:
             pass
@@ -178,29 +187,6 @@ def extract_notes(file_list, parser, mode='build'):
         return pieces_str
 
 
-def piece_to_str(piece):
-    """
-    Convert piece dict in string
-    :param piece: piece
-    :return: string representation of piece dict
-    """
-    piece_str = [PIECE_START]
-
-    for music_elem in piece['MUSIC']:
-        if music_elem == TRACK_START:
-            piece_str.append(TRACK_START)
-        else:
-            for elem in music_elem:
-                if INSTRUMENT in elem:
-                    piece_str.append(elem)
-                else:
-                    if elem == BAR_START:
-                        piece_str.append(BAR_START)
-                    else:
-                        for bar_elem in elem:
-                            pass
-
-
 def prepare_data(section, run_id, music_name):
     list_of_files, bach_parser = get_bach_chorales()
 
@@ -216,33 +202,13 @@ def prepare_data(section, run_id, music_name):
         for piece in piece_list_temp_repr:
             hfile.write(piece + '\n')
 
-    # for piece in piece_list_temp_repr:
-    #     for elem in piece:
-    #         if elem == PIECE_START \
-    #                 or elem == TRACK_START \
-    #                 or INSTRUMENT in elem \
-    #                 or elem == BAR_START \
-    #                 or elem == BAR_END \
-    #                 or elem == TRACK_END \
-    #                 or elem == PIECE_START:
-    #             print()
-    #             print(elem)
-    #         else:
-    #             print(elem, end='; ')
-
-    # for track in piece_list_temp_repr[0]['MUSIC']:
-    #     print(track)
-    #
-    # for piece in piece_list_temp_repr:
-    #     piece_to_str(piece)
-
 
 if __name__ == '__main__':
     # prepare_data(section='compose',
     #              run_id='0007',
     #              music_name='cello')
 
-    text_repr = extract_notes(['data/v_lesu_elka.mid'], converter)
+    text_repr = extract_notes(['test.mid'], converter)
 
     with open('text_repr.txt', 'w') as hfile:
         for piece in text_repr:
