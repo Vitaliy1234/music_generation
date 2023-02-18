@@ -208,7 +208,7 @@ if __name__ == '__main__':
     #              run_id='0007',
     #              music_name='cello')
 
-    text_repr = extract_notes(['test.mid'], converter)
+    text_repr = extract_notes(['data/99_basic_pitch.mid'], converter)
 
     with open('text_repr.txt', 'w') as hfile:
         for piece in text_repr:
