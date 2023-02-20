@@ -1,7 +1,9 @@
+import os
 import pandas as pd
 import torch
 from torch import nn
 import torch.nn.functional as F
+from transformers import PreTrainedTokenizerFast
 
 
 class SelfAttention(nn.Module):
@@ -55,8 +57,26 @@ class SAN(nn.Module):
 
 
 def start():
-    data = pd.read_csv('../data/emotion_music/emotion_annotation/verified_annotation.csv')
-    print(data['toptag_eng_verified'].value_counts())
+    n_bar_window = 2
+
+    model_file = f'gpt2model_{n_bar_window}_bars'
+    tokenizer_path = os.path.join(model_file, "tokenizer.json")
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
+    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+
+    vocab_size = tokenizer.vocab_size
+    embedding_size = 300
+
+    model = SAN(
+        r=14,  # wtf?
+        num_of_dim=2,  # num of classes
+        vocab_size=vocab_size,  # num of "words" in vocabulary
+        embedding_size=embedding_size  # size of embedding
+    )
+
+    print(model)
+    # data = pd.read_csv('../data/emotion_music/emotion_annotation/verified_annotation.csv')
+    # print(data['toptag_eng_verified'].value_counts())
 
 
 if __name__ == '__main__':

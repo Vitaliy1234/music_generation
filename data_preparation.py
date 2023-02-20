@@ -203,6 +203,12 @@ def prepare_data(section, run_id, music_name):
             hfile.write(piece + '\n')
 
 
+def get_text_repr(files):
+    text_representation = extract_notes(files, converter)
+
+    return text_representation
+
+
 if __name__ == '__main__':
     # prepare_data(section='compose',
     #              run_id='0007',
