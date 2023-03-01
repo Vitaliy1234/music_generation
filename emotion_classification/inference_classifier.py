@@ -48,6 +48,7 @@ def test_loop(dataloader, model, loss_fn, device):
 
 
 def train_loop(dataloader, model, loss_fn, optimizer, device):
+    model.train()
     size = len(dataloader.dataset)
     for batch, cur_obj in enumerate(dataloader):
         input_ids, labels = cur_obj['input_ids'].to(device), cur_obj['labels'].to(device)
@@ -59,6 +60,7 @@ def train_loop(dataloader, model, loss_fn, optimizer, device):
         # backward pass
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
         optimizer.step()
 
         if batch % 100 == 0:
@@ -73,7 +75,7 @@ def start():
     output_path = 'classifier_model'
     Path(output_path).mkdir(exist_ok=True)
 
-    learning_rate = 0.1
+    learning_rate = 0.00002
     num_epoch = 20
     batch_size = 16
 
@@ -81,7 +83,7 @@ def start():
     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
     vocab_size = tokenizer.vocab_size
-    embedding_size = 300
+    embedding_size = 10
     pad_length = 128
 
     classes = ['cheerful', 'tense']
@@ -89,7 +91,7 @@ def start():
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     model = SAN(
-        r=14,  # wtf?
+        r=5,  # wtf?
         num_of_dim=len(classes),  # num of classes
         vocab_size=vocab_size,  # num of "words" in vocabulary
         embedding_size=embedding_size  # size of embedding
