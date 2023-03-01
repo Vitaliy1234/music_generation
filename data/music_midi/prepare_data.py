@@ -80,7 +80,7 @@ def build_structured_dataset(raw_dataset_path, annotations, output_dir, train_te
             # delete empty bars and one-note bars
             for text_bar in cur_text_bars:
                 # we need at least two notes in bar
-                if len(text_bar.split(' ')) >= 6:  # NOTE_ON TIME_DELTA NOTE_OFF NOTE_ON TIME_DELTA NOTE_OFF
+                if len(text_bar.split(' ')) >= 12:  # NOTE_ON TIME_DELTA NOTE_OFF NOTE_ON TIME_DELTA NOTE_OFF
                     text_bars.append(text_bar)
 
         if random.random() <= train_test_frac:
