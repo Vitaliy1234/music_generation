@@ -74,6 +74,9 @@ def build_structured_dataset(raw_dataset_path, annotations, output_dir, train_te
             end = text_track.rfind('BAR_END') - 1
             cur_text_bars = text_track[start:end].split(' BAR_END BAR_START ')
 
+            # group bars
+            cur_text_bars = [cur_text_bars[i] + ' ' + cur_text_bars[i + 1] for i in range(0, len(cur_text_bars) - 1, 2)]
+
             # delete empty bars and one-note bars
             for text_bar in cur_text_bars:
                 # we need at least two notes in bar

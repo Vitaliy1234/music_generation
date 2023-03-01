@@ -30,14 +30,14 @@ def create_tokenizer(data_files, tokenizer_path):
     tokenizer.save(tokenizer_path)
 
 
-def test_loop(dataloader, model, loss_fn):
+def test_loop(dataloader, model, loss_fn, device):
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
     test_loss, correct = 0, 0
 
     with torch.no_grad():
         for cur_obj in dataloader:
-            input_ids, labels = cur_obj['input_ids'], cur_obj['labels']
+            input_ids, labels = cur_obj['input_ids'].to(device), cur_obj['labels'].to(device)
             pred = model(input_ids)
             test_loss += loss_fn(pred, labels.reshape(-1)).item()
             correct += (pred.argmax(1) == labels).type(torch.float).sum().item()
@@ -47,10 +47,10 @@ def test_loop(dataloader, model, loss_fn):
     print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
 
 
-def train_loop(dataloader, model, loss_fn, optimizer):
+def train_loop(dataloader, model, loss_fn, optimizer, device):
     size = len(dataloader.dataset)
     for batch, cur_obj in enumerate(dataloader):
-        input_ids, labels = cur_obj['input_ids'], cur_obj['labels']
+        input_ids, labels = cur_obj['input_ids'].to(device), cur_obj['labels'].to(device)
 
         # forward pass
         outputs = model(input_ids)
@@ -73,9 +73,9 @@ def start():
     output_path = 'classifier_model'
     Path(output_path).mkdir(exist_ok=True)
 
-    learning_rate = 0.01
-    num_epoch = 5
-    batch_size = 8
+    learning_rate = 0.1
+    num_epoch = 20
+    batch_size = 16
 
     tokenizer = PreTrainedTokenizerFast(tokenizer_file=path_tokenizer)
     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
@@ -86,12 +86,15 @@ def start():
 
     classes = ['cheerful', 'tense']
 
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
     model = SAN(
         r=14,  # wtf?
         num_of_dim=len(classes),  # num of classes
         vocab_size=vocab_size,  # num of "words" in vocabulary
         embedding_size=embedding_size  # size of embedding
     )
+    model.to(device)
 
     training_data = MidiMusicDataset(midi_data_dir=train_midi_data_dir,
                                      classes=classes,
@@ -110,8 +113,8 @@ def start():
 
     for epoch in range(num_epoch):
         print(f"Epoch {epoch + 1}\n-------------------------------")
-        train_loop(train_dataloader, model, criterion, optimizer)
-        test_loop(test_dataloader, model, criterion)
+        train_loop(train_dataloader, model, criterion, optimizer, device)
+        test_loop(test_dataloader, model, criterion, device)
     print("Done!")
     # data = pd.read_csv('../data/emotion_music/emotion_annotation/verified_annotation.csv')
     # print(data['toptag_eng_verified'].value_counts())
