@@ -187,6 +187,18 @@ def extract_notes(file_list, parser, mode='build'):
         return pieces_str
 
 
+def midi_to_text(parser, file):
+    logger.info(f'Parsing {file}')
+    original_score = parser.parse(file)
+
+    try:
+        cur_piece_list = preprocess_score(original_score)
+        cur_piece_str = ' '.join(cur_piece_list)
+        return cur_piece_str
+    except ValueError as e:
+        logger.warning(e)
+
+
 def prepare_data(section, run_id, music_name):
     list_of_files, bach_parser = get_bach_chorales()
 
@@ -203,9 +215,19 @@ def prepare_data(section, run_id, music_name):
             hfile.write(piece + '\n')
 
 
-def get_text_repr(files):
-    text_representation = extract_notes(files, converter)
+def get_text_repr_file(midi_file):
+    """
+    Makes text representation from midi file
+    :param midi_file:
+    :return: text representation
+    """
+    text_representation = midi_to_text(converter, midi_file)
 
+    return text_representation
+
+
+def get_text_repr_filelist(file_list):
+    text_representation = extract_notes(parser=converter, file_list=file_list)
     return text_representation
 
 
