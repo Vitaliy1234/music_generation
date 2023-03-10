@@ -1,8 +1,9 @@
 import os
 from pathlib import Path
+import numpy as np
 
 import music21
-from music21 import corpus, converter
+from music21 import corpus, converter, interval, pitch
 
 from helpers import logging
 
@@ -162,11 +163,10 @@ def preprocess_bar(bar):
     return bar_dict
 
 
-def extract_notes(file_list, parser, mode='build'):
+def extract_notes(file_list, mode='build'):
     """
     Extract notes names and durations from score
     :param file_list:
-    :param parser:
     :param mode:
     :return pieces: list with text representation of music
     """
@@ -175,7 +175,8 @@ def extract_notes(file_list, parser, mode='build'):
 
         for i, file in enumerate(file_list):
             logger.info(f'{i + 1} Parsing {file}')
-            original_score = parser.parse(file)
+            original_score = converter.parse(file)
+
             # original_score.show()
             try:
                 cur_piece_list = preprocess_score(original_score)
@@ -206,8 +207,7 @@ def prepare_data(section, run_id, music_name):
                                                run_id=run_id,
                                                music_name=music_name)
 
-    piece_list_temp_repr = extract_notes(file_list=list_of_files[:5],
-                                         parser=bach_parser,)
+    piece_list_temp_repr = extract_notes(file_list=list_of_files[:5],)
 
     print(piece_list_temp_repr)
     with open('text_repr.txt', 'w') as hfile:
@@ -227,8 +227,26 @@ def get_text_repr_file(midi_file):
 
 
 def get_text_repr_filelist(file_list):
-    text_representation = extract_notes(parser=converter, file_list=file_list)
+    text_representation = extract_notes(file_list=file_list)
     return text_representation
+
+
+def transpose_text_midi(text_midi, transpositions):
+    result = {}
+
+    for transposition in transpositions:
+        result[transposition] = []
+        for token in text_midi.split(' '):
+            if 'NOTE_ON' in token or 'NOTE_OFF' in token:
+                cur_pitch_value = int(token.split('=')[1])
+                cur_token_without_value = token.split('=')[0]
+                result[transposition].append(f'{cur_token_without_value}={cur_pitch_value + transposition}')
+            else:
+                result[transposition].append(token)
+
+        result[transposition] = ' '.join(result[transposition])
+
+    return np.array(list(result.values()))
 
 
 if __name__ == '__main__':
@@ -236,7 +254,7 @@ if __name__ == '__main__':
     #              run_id='0007',
     #              music_name='cello')
 
-    text_repr = extract_notes(['data/99_basic_pitch.mid'], converter)
+    text_repr = extract_notes(['data/99_basic_pitch.mid'])
 
     with open('text_repr.txt', 'w') as hfile:
         for piece in text_repr:

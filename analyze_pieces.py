@@ -7,9 +7,10 @@ import seaborn as sns
 
 import pandas as pd
 
-from data_preparation import get_bach_chorales, extract_notes, NOTE_ON, NOTE_OFF, TIME_SHIFT, extract_notes_from_files
+from data_preparation import get_bach_chorales, extract_notes, NOTE_ON, NOTE_OFF, TIME_SHIFT
+    # extract_notes_from_files
 
-from music21 import converter
+from music21 import converter, pitch
 
 
 PITCHES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'B-', 'B']
@@ -34,6 +35,14 @@ def get_pitch_name_without_octave(pitch):
 
     if pitch_name in PITCHES_TO_NORM.keys():
         pitch_name = PITCHES_TO_NORM[pitch_name]
+
+    return pitch_name
+
+
+def get_pitch_name(pitch_num):
+    pitch_name = pitch.Pitch(int(pitch_num.split('=')[1])).name
+    if pitch_name in PITCHES_TO_NORM.keys():
+        return PITCHES_TO_NORM[pitch_name]
 
     return pitch_name
 
@@ -88,7 +97,7 @@ def pitch_class_histogram(sample):
     # plt.show()
 
 
-def pitch_class_transition_matrix(sample):
+def pitch_class_transition_matrix(sample, gr_title='pctm'):
     """
     Plot pitch class transition matrix: histogram-like representation computed by counting
     the pitch transitions for each (ordered) pair of notes.
@@ -101,7 +110,8 @@ def pitch_class_transition_matrix(sample):
     for composition in sample:
         for elem in composition:
             if NOTE_ON in elem:
-                cur_pitch = get_pitch_name_without_octave(elem)
+                # cur_pitch = get_pitch_name_without_octave(elem)
+                cur_pitch = get_pitch_name(elem)
 
                 if prev_pitch == '':
                     prev_pitch = cur_pitch
@@ -123,7 +133,7 @@ def pitch_class_transition_matrix(sample):
     plt.title('Pitch class transition matrix')
     sns.heatmap(pitches_df, color='blue', annot=True)
     plt.yticks(rotation=0)
-    plt.savefig('pctm.jpg')
+    plt.savefig(f'{gr_title}.jpg')
 
 
 def pitch_range(sample):
@@ -315,11 +325,14 @@ if __name__ == '__main__':
     #                        )
 
     # compute_metrics(pieces)
-
-    file_list = [os.path.join('generated_data', f'generated_music_{i}.mid') for i in range(200)]
+    labels = pd.read_csv('data/music_midi/verified_annotation.csv')
+    print(labels['toptag_eng_verified'].value_counts())
+    emotion = 'bizarre'
+    files_to_read = labels[labels['toptag_eng_verified'] == emotion]['fname']
+    file_list = [os.path.join('data', 'music_midi', 'emotion_midi', filename) for filename in files_to_read]
 
     pieces = extract_notes(file_list=file_list,
                            parser=converter,
                            )
 
-    compute_metrics(pieces)
+    pitch_class_transition_matrix([piece.strip().split(' ') for piece in pieces], emotion)

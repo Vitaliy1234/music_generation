@@ -2,7 +2,11 @@ import os
 from pathlib import Path
 import random
 import pandas as pd
-from data_preparation import get_text_repr_filelist
+from music21 import converter
+
+from data_preparation import extract_notes
+from preprocessing.preprocess_midi import preprocess_music21_song
+from helpers.samplinghelpers import render_token_sequence
 
 
 def prepare_annotations(labels_file: str) -> None:
@@ -92,13 +96,28 @@ def build_structured_dataset(raw_dataset_path, annotations, output_dir, train_te
             text_midi_file.write('\n'.join(text_bars))
 
 
+def create_text_files_from_midi(dataset, filelist, output):
+    midi_filelist = []
+
+    for file in filelist:
+        if file.endswith('.mid'):
+            midi_filelist.append(file)
+
+    texts = extract_notes([os.path.join(dataset, cur_file) for cur_file in midi_filelist])
+
+    for (text, midi_file) in zip(texts, midi_filelist):
+        with open(os.path.join(output, midi_file.replace('.mid', '.txt')), 'w') as text_midi:
+            text_midi.write(text)
+
+
 if __name__ == '__main__':
     labels_filename = 'verified_annotation.csv'
     dataset_path = 'emotion_midi'
     output_directory = 'emotion_midi_text'
+    output_dir = 'emotion_midi_texts'
     # prepare_annotations(labels_file=labels_filename)
     # classes = ['cheerful', 'tense']
     # factor = 0.2
     # train_test_split_and_save(labels_filename, classes)
-    build_structured_dataset(dataset_path, labels_filename, output_directory, train_test_frac=0.3)
-
+    # build_structured_dataset(dataset_path, labels_filename, output_directory, train_test_frac=0.3)
+    create_text_files_from_midi(dataset_path, os.listdir(dataset_path), output_dir)
