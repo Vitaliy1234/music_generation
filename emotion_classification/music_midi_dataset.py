@@ -9,11 +9,13 @@ class MidiMusicDataset(Dataset):
     """
     Class for midi music dataset
     """
-    def __init__(self, midi_data_dir, classes, tokenizer, block_size):
+    def __init__(self, text_midis, labels, tokenizer, block_size):
         """
-        Initialization of midi music dataset class
-        :param midi_data_dir: name of directory with midis
-        :param classes:
+        Initialization of midi music dataset
+        :param text_midis: midis in text format
+        :param labels: class labels
+        :param tokenizer:
+        :param block_size:
         """
         pad_token_id = tokenizer.encode("[PAD]")[0]
         unk_token_id = tokenizer.encode("[UNK]")[0]
@@ -21,18 +23,9 @@ class MidiMusicDataset(Dataset):
         self.examples = []
         self.tokenizer = tokenizer
 
-        lines = []
-        labels = []
+        classes = list(set(labels))
 
-        for class_name in classes:
-            cur_file = os.path.join(midi_data_dir, class_name) + '.txt'
-            with open(cur_file, 'r') as midi_text:
-                midi_text_lines = midi_text.readlines()
-
-            lines.extend(midi_text_lines)
-            labels.extend([class_name] * len(midi_text_lines))
-
-        for line, label in zip(lines, labels):
+        for line, label in zip(text_midis, labels):
             line = line.strip()
             if line == "":
                 continue

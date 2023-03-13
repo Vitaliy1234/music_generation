@@ -2,14 +2,15 @@ import os
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
+
+from tqdm import tqdm
 
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
 from transformers import PreTrainedTokenizerFast
-from transformers import DataCollatorWithPadding
-from transformers import Trainer, TrainingArguments
 
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
@@ -18,6 +19,8 @@ from tokenizers.trainers import WordLevelTrainer
 
 from classifier import SAN
 from music_midi_dataset import MidiMusicDataset
+
+from data_preparation import transpose_text_midi
 
 
 def create_tokenizer(data_files, tokenizer_path):
@@ -30,7 +33,7 @@ def create_tokenizer(data_files, tokenizer_path):
     tokenizer.save(tokenizer_path)
 
 
-def test_loop(dataloader, model, loss_fn, device):
+def valid_loop(dataloader, model, loss_fn, device):
     size = len(dataloader.dataset)
     num_batches = len(dataloader)
     test_loss, correct = 0, 0
@@ -68,9 +71,38 @@ def train_loop(dataloader, model, loss_fn, optimizer, device):
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
 
+def get_dataset(annotations_path, midi_texts_path):
+    annots = pd.read_csv(annotations_path)
+    annots = annots[annots['toptag_eng_verified'].isin(['cheerful', 'tense'])]
+    # TODO: вынести объявление классов куда-нибудь отдельно
+    classes = {'cheerful': 0,
+               'tense': 1}
+
+    annots['toptag_eng_verified'] = annots['toptag_eng_verified'].replace(classes).astype('float')
+
+    midi_texts = []
+
+    for txt_midi in tqdm(annots['fname']):
+        # read encoded midi via MMM Encoding in my realization
+        with open(os.path.join(midi_texts_path, txt_midi.replace('.mid', '.txt')), 'r') as t_mid:
+            midi_texts.append(t_mid.read())
+
+    annots['midi_text'] = midi_texts
+
+    split_index = int(annots.shape[0] * 0.7)
+    annots_train = annots[:split_index]
+    annots_test = annots[split_index:]
+
+    annots_train['midi_text'] = annots_train['midi_text'].apply(lambda elem: transpose_text_midi(elem, range(12)))
+    annots_train = annots_train.explode('midi_text')
+
+    return annots_train, annots_test
+
+
 def start():
-    train_midi_data_dir = '../data/music_midi/emotion_midi_text/train'
-    test_midi_data_dir = '../data/music_midi/emotion_midi_text/test'
+    midi_data_dir = '/Users/18629082/Desktop/music_generation/data/music_midi/emotion_midi_texts'
+    annotations_path = os.path.join('../data', 'music_midi', 'verified_annotation.csv')
+    annots_train, annots_test = get_dataset(annotations_path, midi_data_dir)
     path_tokenizer = 'tokenizer.json'
     output_path = 'classifier_model'
     Path(output_path).mkdir(exist_ok=True)
@@ -98,12 +130,12 @@ def start():
     )
     model.to(device)
 
-    training_data = MidiMusicDataset(midi_data_dir=train_midi_data_dir,
-                                     classes=classes,
+    training_data = MidiMusicDataset(text_midis=annots_train['midi_text'],
+                                     labels=annots_train['toptag_eng_verified'],
                                      tokenizer=tokenizer,
                                      block_size=pad_length)
-    test_data = MidiMusicDataset(midi_data_dir=test_midi_data_dir,
-                                 classes=classes,
+    test_data = MidiMusicDataset(text_midis=annots_test['midi_text'],
+                                 labels=annots_test['toptag_eng_verified'],
                                  tokenizer=tokenizer,
                                  block_size=pad_length)
     train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=True)
@@ -116,7 +148,7 @@ def start():
     for epoch in range(num_epoch):
         print(f"Epoch {epoch + 1}\n-------------------------------")
         train_loop(train_dataloader, model, criterion, optimizer, device)
-        test_loop(test_dataloader, model, criterion, device)
+        valid_loop(test_dataloader, model, criterion, device)
     print("Done!")
     # data = pd.read_csv('../data/emotion_music/emotion_annotation/verified_annotation.csv')
     # print(data['toptag_eng_verified'].value_counts())
