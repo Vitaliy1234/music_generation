@@ -100,23 +100,24 @@ def get_dataset(annotations_path, midi_texts_path):
 
 
 def start():
-    midi_data_dir = '/Users/18629082/Desktop/music_generation/data/music_midi/emotion_midi_texts'
+    # midi_data_dir = '/Users/18629082/Desktop/music_generation/data/music_midi/emotion_midi_texts'
+    midi_data_dir = r'D:\Диссер_музыка\music_generation\data\music_midi\emotion_midi_texts'
     annotations_path = os.path.join('../data', 'music_midi', 'verified_annotation.csv')
     annots_train, annots_test = get_dataset(annotations_path, midi_data_dir)
     path_tokenizer = 'tokenizer.json'
     output_path = 'classifier_model'
     Path(output_path).mkdir(exist_ok=True)
 
-    learning_rate = 0.00002
+    learning_rate = 0.001
     num_epoch = 20
-    batch_size = 16
+    batch_size = 8
 
     tokenizer = PreTrainedTokenizerFast(tokenizer_file=path_tokenizer)
     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
 
     vocab_size = tokenizer.vocab_size
     embedding_size = 10
-    pad_length = 128
+    pad_length = 512
 
     classes = ['cheerful', 'tense']
 
@@ -126,7 +127,10 @@ def start():
         r=5,  # wtf?
         num_of_dim=len(classes),  # num of classes
         vocab_size=vocab_size,  # num of "words" in vocabulary
-        embedding_size=embedding_size  # size of embedding
+        embedding_size=embedding_size,  # size of embedding
+        lstm_hidden_dim=8,
+        da=8,
+        hidden_dim=32
     )
     model.to(device)
 
@@ -150,8 +154,13 @@ def start():
         train_loop(train_dataloader, model, criterion, optimizer, device)
         valid_loop(test_dataloader, model, criterion, device)
     print("Done!")
-    # data = pd.read_csv('../data/emotion_music/emotion_annotation/verified_annotation.csv')
-    # print(data['toptag_eng_verified'].value_counts())
+    x = test_data.__getitem__(0)['input_ids']
+    x = x.unsqueeze(dim=0)
+    x.to('cpu')
+    model.to('cpu')
+    score, attn_map = model._get_attention_weight(x)
+
+    print(score, attn_map)
 
 
 if __name__ == '__main__':

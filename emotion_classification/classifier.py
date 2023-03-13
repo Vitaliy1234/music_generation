@@ -28,8 +28,10 @@ class SAN(nn.Module):
         self._embedding = nn.Embedding(vocab_size, embedding_size)
         self._bilstm = nn.LSTM(embedding_size, lstm_hidden_dim, batch_first=True, bidirectional=True)
         self._attention = SelfAttention(2 * lstm_hidden_dim, da, r)
+        # self._attention = SelfAttention(embedding_size, da, r)
         self._classifier = nn.Sequential(
             nn.Linear(2 * lstm_hidden_dim * r, hidden_dim),
+            # nn.Linear(embedding_size * r, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, num_of_dim)
         )
@@ -39,6 +41,8 @@ class SAN(nn.Module):
         outputs, hc = self._bilstm(fmap)
         attn_mat = self._attention(outputs)
         m = torch.bmm(attn_mat, outputs)
+        # attn_mat = self._attention(fmap)
+        # m = torch.bmm(attn_mat, fmap)
         flatten = m.view(m.size()[0], -1)
         score = self._classifier(flatten)
         return score
@@ -48,6 +52,8 @@ class SAN(nn.Module):
         outputs, hc = self._bilstm(fmap)
         attn_mat = self._attention(outputs)
         m = torch.bmm(attn_mat, outputs)
+        # attn_mat = self._attention(fmap)
+        # m = torch.bmm(attn_mat, fmap)
         flatten = m.view(m.size()[0], -1)
         score = self._classifier(flatten)
         return score, attn_mat

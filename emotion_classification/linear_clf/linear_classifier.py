@@ -68,8 +68,8 @@ def start(dataset, annotations):
     # vectorizer = TfidfVectorizer(token_pattern=r'bar_start.+?bar_end', min_df=3, max_df=0.7, ngram_range=(1, 2))
 
     # gensim
-    vec_size = 100
-    tokenizer = re.compile(r' .+? ')
+    vec_size = 200
+    tokenizer = re.compile(r'BAR_START.+?BAR_END')
     tokenized_midi = list(annots_train['midi_text'].apply(lambda text: tokenizer.findall(text)))
     music_sentences = tokenized_midi
     music_sentences.extend(list(annots_test['midi_text'].apply(lambda text: tokenizer.findall(text))))
@@ -98,7 +98,7 @@ def start(dataset, annotations):
     print(X_train.shape)
     print(X_test.shape)
 
-    model = SVC(random_state=0)
+    model = SVC(random_state=0, tol=1e-4)
     model.fit(X_train, y_train)
 
     ytest = np.array(y_test)
@@ -119,6 +119,8 @@ def start(dataset, annotations):
 
 
 if __name__ == '__main__':
-    dataset_path = '/Users/18629082/Desktop/music_generation/data/music_midi/emotion_midi_texts'
-    annotation_path = '/Users/18629082/Desktop/music_generation/data/music_midi/verified_annotation.csv'
+    # dataset_path = '/Users/18629082/Desktop/music_generation/data/music_midi/emotion_midi_texts'
+    # annotation_path = '/Users/18629082/Desktop/music_generation/data/music_midi/verified_annotation.csv'
+    dataset_path = r'D:\Диссер_музыка\music_generation\data\music_midi\emotion_midi_texts'
+    annotation_path = r'D:\Диссер_музыка\music_generation\data\music_midi\verified_annotation.csv'
     start(dataset_path, annotation_path)
