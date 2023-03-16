@@ -36,4 +36,4 @@ def miditok_test(midi_file):
 
 
 if __name__ == '__main__':
-    miditok_test(os.path.join('../data', 'v_lesu_elka.mid'))
+    print(miditok_test(os.path.join('../data', 'v_lesu_elka.mid')))

@@ -249,6 +249,10 @@ def transpose_text_midi(text_midi, transpositions):
     return np.array(list(result.values()))
 
 
+def to_interval_repr(text_midi):
+    pass
+
+
 if __name__ == '__main__':
     # prepare_data(section='compose',
     #              run_id='0007',

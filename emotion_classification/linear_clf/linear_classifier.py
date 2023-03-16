@@ -1,6 +1,5 @@
 import os
-
-import re
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -9,18 +8,12 @@ from tqdm import tqdm
 
 from sklearn.linear_model import LogisticRegression, LinearRegression, RidgeClassifier, SGDClassifier
 from sklearn.svm import SVC
-from sklearn.tree import DecisionTreeClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from sklearn.pipeline import Pipeline
-from sklearn.feature_selection import chi2, SelectKBest
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.model_selection import train_test_split
 
-import gensim
-
-from emotion_classification.preprocess_miditok import miditok_test
-
-from data_preparation import transpose_text_midi
+from miditok import CPWord, REMI
 
 
 def word_vector(model_w2v, tokens, size):
@@ -37,68 +30,92 @@ def word_vector(model_w2v, tokens, size):
     return vec
 
 
-def start(dataset, annotations):
-    annots = pd.read_csv(annotations)
-    annots = annots[annots['toptag_eng_verified'].isin(['cheerful', 'tense'])]
+# for miditok tokenizer
+def midi_valid(midi) -> bool:
+    if any(ts.numerator != 4 for ts in midi.time_signature_changes):
+        return False  # time signature different from 4/*, 4 beats per bar
+    if midi.max_tick < 10 * midi.ticks_per_beat:
+        return False  # this MIDI is too short
+    return True
 
+
+def start(dataset, annotations):
     classes = {'cheerful': 0,
                'tense': 1}
+
+    annots = pd.read_csv(annotations)
+    annots = annots[annots['toptag_eng_verified'].isin(classes.keys())]
 
     annots['toptag_eng_verified'] = annots['toptag_eng_verified'].replace(classes).astype('float')
 
     midi_texts = []
+    # experiment with miditok
+    tokens_nobpe_path = Path('tokenized_dataset', 'tokens_noBPE')
+    tokens_nobpe_path.mkdir(exist_ok=True, parents=True)
+    tokens_bpe_path = Path('tokenized_dataset', 'tokens_BPE')
+    tokens_bpe_path.mkdir(exist_ok=True)
+    tokenizer = REMI()
+    data_augmentation_offsets = [2, 2, 2]
 
-    for txt_midi in tqdm(annots['fname']):
-        # read encoded midi via MMM Encoding in my realization
-        with open(os.path.join(dataset, txt_midi.replace('.mid', '.txt')), 'r') as t_mid:
-            midi_texts.append(t_mid.read())
-
-    annots['midi_text'] = midi_texts
-
-    split_index = int(annots.shape[0] * 0.7)
-    annots_train = annots[:split_index]
-    annots_test = annots[split_index:]
-
-    print(annots_train['toptag_eng_verified'].value_counts())
-    print(annots_test['toptag_eng_verified'].value_counts())
-
-    annots_train['midi_text'] = annots_train['midi_text'].apply(lambda elem: transpose_text_midi(elem, range(12)))
-    annots_train = annots_train.explode('midi_text')
-
-    # vectorizer = TfidfVectorizer(token_pattern=r'bar_start.+?bar_end', min_df=3, max_df=0.7, ngram_range=(1, 2))
-
-    # gensim
-    vec_size = 200
-    tokenizer = re.compile(r'BAR_START.+?BAR_END')
-    tokenized_midi = list(annots_train['midi_text'].apply(lambda text: tokenizer.findall(text)))
-    music_sentences = tokenized_midi
-    music_sentences.extend(list(annots_test['midi_text'].apply(lambda text: tokenizer.findall(text))))
-
-    vectorizer = gensim.models.Word2Vec(sentences=music_sentences, vector_size=vec_size, window=15, min_count=5)
-    bar_vectors = vectorizer.wv
-
-    word2vec_arrays = np.zeros((len(music_sentences), vec_size))
-    for i in range(len(music_sentences)):
-        word2vec_arrays[i, :] = word_vector(bar_vectors, music_sentences[i], vec_size)
-    word2vec_df = pd.DataFrame(word2vec_arrays)
-
-    # X_train = annots_train['midi_text']
-    # y_train = annots_train['toptag_eng_verified']
-    # X_test = annots_test['midi_text']
-    # y_test = annots_test['toptag_eng_verified']
+    midi_dataset = list(annots['fname'].apply(lambda fname: os.path.join(dataset, fname)).values)
+    tokenizer.tokenize_midi_dataset(midi_dataset,
+                                    tokens_nobpe_path,
+                                    midi_valid,
+                                    data_augmentation_offsets)
+    # learn BPE
+    # tokenizer.learn_bpe(
+    #     vocab_size=500,
+    #     tokens_paths=list(tokens_nobpe_path.glob("**/*.json")),
+    # )
     #
-    # X_train = vectorizer.fit_transform(X_train)
-    # X_test = vectorizer.transform(X_test)
+    # tokenizer.apply_bpe_to_dataset(tokens_nobpe_path, tokens_bpe_path)
 
-    X_train = word2vec_df.iloc[:annots_train.shape[0]]
-    y_train = annots_train['toptag_eng_verified']
-    X_test = word2vec_df.iloc[annots_train.shape[0]:]
-    y_test = annots_test['toptag_eng_verified']
+    annots['fname_short'] = annots['fname'].apply(lambda fname: fname.split('.mid')[0])
+    annots['midi_text'] = [[]] * annots.shape[0]
+
+    reversed_vocab = {ind: token for token, ind in zip(tokenizer.vocab.keys(), tokenizer.vocab.values())}
+
+    X = []
+    y = []
+    print('Creating dataset for train and test model')
+    for file in tokens_nobpe_path.glob("**/*.json"):
+        tokens = tokenizer.load_tokens(file)
+        ids_list = tokens['ids']
+        str_tokens = []
+
+        for track in ids_list:
+            track_str_tokens = [reversed_vocab[cur_id] for cur_id in track]
+
+            str_tokens.extend(track_str_tokens)
+
+        midi_texts.append(' '.join(str_tokens))
+        # name of current file without extension and § (used in miditok augmentation)
+        file_short = file.parts[-1].split('.json')[0].split('§')[0]
+        label = annots[annots['fname_short'] == file_short]['toptag_eng_verified'].values
+        label = label[0]
+
+        X.append(' '.join(str_tokens))
+        y.append(label)
+
+    vectorizer = TfidfVectorizer(token_pattern=r'ar_none.+?b', min_df=3, max_df=0.8, ngram_range=(1, 1))
+
+    X = pd.DataFrame(X, columns=['midi_text'])
+    y = np.array(y).reshape(-1, 1)
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+
+    print(X_train.shape)
+    print(y_train.shape)
+    print(X_test.shape)
+    print(y_test.shape)
+
+    X_train = vectorizer.fit_transform(X_train['midi_text'])
+    X_test = vectorizer.transform(X_test['midi_text'])
 
     print(X_train.shape)
     print(X_test.shape)
 
-    model = SVC(random_state=0, tol=1e-4)
+    model = LogisticRegression(random_state=0)
     model.fit(X_train, y_train)
 
     ytest = np.array(y_test)
@@ -108,19 +125,20 @@ def start(dataset, annotations):
     print(confusion_matrix(ytest, model.predict(X_test)))
     print(model.coef_)
 
+    # save bar coefficients in excel file
     bar_to_coef = {}
+    for bar in vectorizer.vocabulary_:
+        bar_to_coef[bar] = model.coef_[0][vectorizer.vocabulary_[bar]]
 
-    # for bar in vectorizer.vocabulary_:
-    #     bar_to_coef[bar] = model.coef_[0][vectorizer.vocabulary_[bar]]
-    #
-    # bar_weights = pd.DataFrame(bar_to_coef.values(), index=list(bar_to_coef.keys()), columns=['weight'])
-    # bar_weights.to_excel('bar_weights.xlsx')
+    bar_weights = pd.DataFrame(bar_to_coef.values(), index=list(bar_to_coef.keys()), columns=['weight'])
+    bar_weights.to_excel('bar_weights.xlsx')
     return
 
 
 if __name__ == '__main__':
     # dataset_path = '/Users/18629082/Desktop/music_generation/data/music_midi/emotion_midi_texts'
-    # annotation_path = '/Users/18629082/Desktop/music_generation/data/music_midi/verified_annotation.csv'
-    dataset_path = r'D:\Диссер_музыка\music_generation\data\music_midi\emotion_midi_texts'
-    annotation_path = r'D:\Диссер_музыка\music_generation\data\music_midi\verified_annotation.csv'
+    dataset_path = '/Users/18629082/Desktop/music_generation/data/music_midi/emotion_midi'
+    annotation_path = '/Users/18629082/Desktop/music_generation/data/music_midi/verified_annotation.csv'
+    # dataset_path = r'D:\Диссер_музыка\music_generation\data\music_midi\emotion_midi_texts'
+    # annotation_path = r'D:\Диссер_музыка\music_generation\data\music_midi\verified_annotation.csv'
     start(dataset_path, annotation_path)
