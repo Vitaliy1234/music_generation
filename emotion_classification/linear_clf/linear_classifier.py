@@ -4,30 +4,14 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-from tqdm import tqdm
-
-from sklearn.linear_model import LogisticRegression, LinearRegression, RidgeClassifier, SGDClassifier
+from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from sklearn.svm import SVC
-from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import confusion_matrix, classification_report
 from sklearn.model_selection import train_test_split
 
-from miditok import CPWord, REMI
-
-
-def word_vector(model_w2v, tokens, size):
-    vec = np.zeros(size).reshape((1, size))
-    count = 0
-    for word in tokens:
-        try:
-            vec += model_w2v[word].reshape((1, size))
-            count += 1.
-        except KeyError:  # handling the case where the token is not in vocabulary
-            continue
-    if count != 0:
-        vec /= count
-    return vec
+from miditok import REMI
 
 
 # for miditok tokenizer
@@ -39,46 +23,75 @@ def midi_valid(midi) -> bool:
     return True
 
 
+def tokenize_midi(annotations,
+                  midi_dataset_path,
+                  output_nobpe,
+                  output_bpe,
+                  refresh_tokenize,
+                  bpe=False):
+    """
+    Tokenize MIDI dataset and optional apply BPE
+    :param refresh_tokenize:
+    :param output_bpe:
+    :param output_nobpe:
+    :param annotations:
+    :param midi_dataset_path:
+    :param bpe:
+    :return:
+    """
+    tokenizer = REMI()
+    data_augmentation_offsets = [2, 2, 1]
+
+    midi_dataset = list(annotations['fname'].apply(lambda fname: os.path.join(midi_dataset_path, fname)).values)
+
+    if refresh_tokenize:
+        tokenizer.tokenize_midi_dataset(midi_dataset,
+                                        output_nobpe,
+                                        midi_valid,
+                                        data_augmentation_offsets
+                                        )
+        if bpe:
+            # learn BPE
+            tokenizer.learn_bpe(
+                vocab_size=500,
+                tokens_paths=list(output_nobpe.glob("**/*.json")),
+            )
+
+            tokenizer.apply_bpe_to_dataset(output_nobpe, output_bpe)
+
+            return tokenizer, output_bpe
+    return tokenizer, output_nobpe
+
+
 def start(dataset, annotations):
     classes = {'cheerful': 0,
-               'tense': 1}
+               'tense': 1,
+               'bizarre': 2}
 
     annots = pd.read_csv(annotations)
     annots = annots[annots['toptag_eng_verified'].isin(classes.keys())]
-
     annots['toptag_eng_verified'] = annots['toptag_eng_verified'].replace(classes).astype('float')
 
-    midi_texts = []
-    # experiment with miditok
     tokens_nobpe_path = Path('tokenized_dataset', 'tokens_noBPE')
     tokens_nobpe_path.mkdir(exist_ok=True, parents=True)
     tokens_bpe_path = Path('tokenized_dataset', 'tokens_BPE')
     tokens_bpe_path.mkdir(exist_ok=True)
-    tokenizer = REMI()
-    data_augmentation_offsets = [2, 2, 2]
 
-    midi_dataset = list(annots['fname'].apply(lambda fname: os.path.join(dataset, fname)).values)
-    tokenizer.tokenize_midi_dataset(midi_dataset,
-                                    tokens_nobpe_path,
-                                    midi_valid,
-                                    data_augmentation_offsets)
-    # learn BPE
-    # tokenizer.learn_bpe(
-    #     vocab_size=500,
-    #     tokens_paths=list(tokens_nobpe_path.glob("**/*.json")),
-    # )
-    #
-    # tokenizer.apply_bpe_to_dataset(tokens_nobpe_path, tokens_bpe_path)
+    tokenizer, tokens_path = tokenize_midi(annotations=annots,
+                                           midi_dataset_path=dataset,
+                                           output_nobpe=tokens_nobpe_path,
+                                           output_bpe=tokens_bpe_path,
+                                           refresh_tokenize=False,
+                                           bpe=True)
 
     annots['fname_short'] = annots['fname'].apply(lambda fname: fname.split('.mid')[0])
-    annots['midi_text'] = [[]] * annots.shape[0]
 
     reversed_vocab = {ind: token for token, ind in zip(tokenizer.vocab.keys(), tokenizer.vocab.values())}
-
+    # reversed_vocab = {ind: token for token, ind in zip(tokenizer.vocab_bpe.keys(), tokenizer.vocab_bpe.values())}
     X = []
     y = []
     print('Creating dataset for train and test model')
-    for file in tokens_nobpe_path.glob("**/*.json"):
+    for file in tokens_path.glob("**/*.json"):
         tokens = tokenizer.load_tokens(file)
         ids_list = tokens['ids']
         str_tokens = []
@@ -88,7 +101,6 @@ def start(dataset, annotations):
 
             str_tokens.extend(track_str_tokens)
 
-        midi_texts.append(' '.join(str_tokens))
         # name of current file without extension and § (used in miditok augmentation)
         file_short = file.parts[-1].split('.json')[0].split('§')[0]
         label = annots[annots['fname_short'] == file_short]['toptag_eng_verified'].values
@@ -97,12 +109,13 @@ def start(dataset, annotations):
         X.append(' '.join(str_tokens))
         y.append(label)
 
+    # creating vectorizer with token_pattern for split REMI tokens to bars
     vectorizer = TfidfVectorizer(token_pattern=r'ar_none.+?b', min_df=3, max_df=0.8, ngram_range=(1, 1))
 
     X = pd.DataFrame(X, columns=['midi_text'])
     y = np.array(y).reshape(-1, 1)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
     print(X_train.shape)
     print(y_train.shape)
@@ -115,9 +128,10 @@ def start(dataset, annotations):
     print(X_train.shape)
     print(X_test.shape)
 
-    model = LogisticRegression(random_state=0)
+    model = LogisticRegressionCV(cv=5, random_state=0, scoring='f1_macro', max_iter=100)
     model.fit(X_train, y_train)
-
+    print(f'Score on test data: {model.score(X_test, y_test)}')
+    print(f'Score on train data: {model.score(X_train, y_train)}')
     ytest = np.array(y_test)
 
     # confusion matrix and classification report(precision, recall, F1-score)
@@ -128,9 +142,12 @@ def start(dataset, annotations):
     # save bar coefficients in excel file
     bar_to_coef = {}
     for bar in vectorizer.vocabulary_:
-        bar_to_coef[bar] = model.coef_[0][vectorizer.vocabulary_[bar]]
+        bar_to_coef[bar] = {}
+        for emotion_id, emotion_coefs in enumerate(model.coef_):
+            bar_to_coef[bar][emotion_id] = emotion_coefs[vectorizer.vocabulary_[bar]]
 
-    bar_weights = pd.DataFrame(bar_to_coef.values(), index=list(bar_to_coef.keys()), columns=['weight'])
+    bar_weights = pd.DataFrame.from_dict(bar_to_coef).T
+
     bar_weights.to_excel('bar_weights.xlsx')
     return
 
