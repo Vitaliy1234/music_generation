@@ -1,10 +1,10 @@
 import os
-from typing import List
 
 import numpy as np
 import torch
 from transformers import GPT2LMHeadModel
-from transformers import PreTrainedTokenizerFast
+
+from miditok import REMI
 
 from sample import midi_to_text
 
@@ -23,6 +23,8 @@ VERBOSITY_LEVELS = {
     'verbose': VERBOSE,
     'very_verbose': VERY_VERBOSE,
 }
+
+MODEL_FILE = os.path.join('..', 'models', 'el_yellow_ts.pt')
 
 
 def run_pplm_example(pretrained_model="gpt2-medium",
@@ -53,7 +55,7 @@ def run_pplm_example(pretrained_model="gpt2-medium",
                      no_cuda=False,
                      colorama=False,
                      verbosity='regular',
-                     n_bar_window=2):
+                     ):
     # set Random seed
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -63,7 +65,7 @@ def run_pplm_example(pretrained_model="gpt2-medium",
     verbosity_level = VERBOSITY_LEVELS.get(verbosity.lower(), REGULAR)
 
     # load pretrained model and tokenizer
-    model, tokenizer = load_model(n_bar_window)
+    model, tokenizer = load_model()
     model.to(device)
     model.eval()
 
@@ -71,14 +73,11 @@ def run_pplm_example(pretrained_model="gpt2-medium",
     for param in model.parameters():
         param.requires_grad = False
 
-    input_ids = tokenizer.encode(priming_sample, return_tensors="pt")
-
     unpert_gen_tok_text, pert_gen_tok_texts, _, _ = full_text_generation(
         model=model,
         tokenizer=tokenizer,
         affect_weight=affect_weight,
         knob=knob,
-        context=input_ids,
         device=device,
         num_samples=num_samples,
         bag_of_words=bag_of_words,
@@ -101,14 +100,9 @@ def run_pplm_example(pretrained_model="gpt2-medium",
     )
 
 
-def load_model(n_bar_window):
-    model_file = f'gpt2model_{n_bar_window}_bars'
-    tokenizer_path = os.path.join(model_file, "tokenizer.json")
-    tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
-    tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-
-    model_path = os.path.join(model_file, "best_model")
-    model = GPT2LMHeadModel.from_pretrained(model_path)
+def load_model():
+    tokenizer = REMI()
+    model = torch.jit.load(MODEL_FILE)
 
     return model, tokenizer
 
@@ -218,8 +212,8 @@ def get_affect_words_and_int(affect_class):
     :return:
     """
     emotions = ""
-    filepath = cached_path(emotions)
-
+    # filepath = cached_path(emotions)
+    filepath = ''
     with open(filepath, "r") as f:
         words = f.read().strip().split("\n")[1:]
 
@@ -258,13 +252,13 @@ def generate(priming_sample):
 
 
 if __name__ == '__main__':
-    filename = os.path.join('data', 'jingle_bells.mid')
-    split_path = os.path.split(filename)
-    priming_txt = f"{split_path[1].split('.')[0]}.txt"
-    priming_txt = os.path.join('text_representations', priming_txt)
-    midi_to_text(filename, priming_txt)
-
-    with open(priming_txt, 'r') as hfile:
-        sample = hfile.read()
-
+    # filename = os.path.join('..', 'data', 'jingle_bells.mid')
+    # split_path = os.path.split(filename)
+    # priming_txt = f"{split_path[1].split('.')[0]}.txt"
+    # priming_txt = os.path.join('text_representations', priming_txt)
+    # midi_to_text(filename, priming_txt)
+    #
+    # with open(priming_txt, 'r') as hfile:
+    #     sample = hfile.read()
+    sample = 'PIECE_START'
     generate(sample)

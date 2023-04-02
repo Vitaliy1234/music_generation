@@ -42,7 +42,11 @@ def tokenize_midi(annotations,
     tokenizer = REMI()
     data_augmentation_offsets = [2, 2, 1]
 
-    midi_dataset = list(annotations['fname'].apply(lambda fname: os.path.join(midi_dataset_path, fname)).values)
+    midi_dataset = list(
+        annotations['fname'].apply(
+            lambda fname: os.path.join(midi_dataset_path, fname)
+        ).values
+    )
 
     if refresh_tokenize:
         tokenizer.tokenize_midi_dataset(midi_dataset,
@@ -81,8 +85,8 @@ def start(dataset, annotations):
                                            midi_dataset_path=dataset,
                                            output_nobpe=tokens_nobpe_path,
                                            output_bpe=tokens_bpe_path,
-                                           refresh_tokenize=False,
-                                           bpe=True)
+                                           refresh_tokenize=True,
+                                           bpe=False)
 
     annots['fname_short'] = annots['fname'].apply(lambda fname: fname.split('.mid')[0])
 
@@ -154,8 +158,8 @@ def start(dataset, annotations):
 
 if __name__ == '__main__':
     # dataset_path = '/Users/18629082/Desktop/music_generation/data/music_midi/emotion_midi_texts'
-    dataset_path = '/Users/18629082/Desktop/music_generation/data/music_midi/emotion_midi'
-    annotation_path = '/Users/18629082/Desktop/music_generation/data/music_midi/verified_annotation.csv'
-    # dataset_path = r'D:\Диссер_музыка\music_generation\data\music_midi\emotion_midi_texts'
-    # annotation_path = r'D:\Диссер_музыка\music_generation\data\music_midi\verified_annotation.csv'
+    # dataset_path = '/Users/18629082/Desktop/music_generation/data/music_midi/emotion_midi'
+    # annotation_path = '/Users/18629082/Desktop/music_generation/data/music_midi/verified_annotation.csv'
+    dataset_path = r'D:\Диссер_музыка\music_generation\data\music_midi\emotion_midi'
+    annotation_path = r'D:\Диссер_музыка\music_generation\data\music_midi\verified_annotation.csv'
     start(dataset_path, annotation_path)
