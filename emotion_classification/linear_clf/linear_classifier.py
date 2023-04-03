@@ -4,10 +4,8 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
-from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegressionCV
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.pipeline import Pipeline
 from sklearn.metrics import confusion_matrix, classification_report
 from sklearn.model_selection import train_test_split
 
@@ -150,7 +148,7 @@ def start(dataset, annotations):
         for emotion_id, emotion_coefs in enumerate(model.coef_):
             bar_to_coef[bar][emotion_id] = emotion_coefs[vectorizer.vocabulary_[bar]]
 
-    bar_weights = pd.DataFrame.from_dict(bar_to_coef).T
+    bar_weights = pd.DataFrame.from_dict(bar_to_coef, columns=list(classes.keys())).T
 
     bar_weights.to_excel('bar_weights.xlsx')
     return

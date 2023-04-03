@@ -1,6 +1,7 @@
 import os
 
 import numpy as np
+import pandas as pd
 import torch
 from transformers import GPT2LMHeadModel
 
@@ -25,6 +26,7 @@ VERBOSITY_LEVELS = {
 }
 
 MODEL_FILE = os.path.join('..', 'models', 'el_yellow_ts.pt')
+BAG_OF_BARS_FILE = os.path.join('linear_clf', 'bar_weights.xlsx')
 
 
 def run_pplm_example(pretrained_model="gpt2-medium",
@@ -107,6 +109,182 @@ def load_model():
     return model, tokenizer
 
 
+def generate_text_pplm(
+        model,
+        tokenizer,
+        affect_weight=0.2,
+        context=None,
+        past=None,
+        device="cuda",
+        perturb=True,
+        bow_indices=None,
+        bow_indices_affect=None,
+        affect_int=None,
+        knob=None,
+        classifier=None,
+        class_label=None,
+        loss_type=0,
+        length=100,
+        stepsize=0.02,
+        temperature=1.0,
+        top_k=10,
+        sample=True,
+        num_iterations=3,
+        grad_length=10000,
+        horizon_length=1,
+        window_length=0,
+        decay=False,
+        gamma=1.5,
+        gm_scale=0.9,
+        kl_scale=0.01,
+        verbosity_level=REGULAR
+):
+    output_so_far = None
+
+    if context:
+        context_t = torch.tensor(context, device=device, dtype=torch.long)
+        while len(context_t.shape) < 2:
+            context_t = context_t.unsqueeze(0)
+        output_so_far = context_t
+
+    # collect one hot vectors for bags of words
+    one_hot_bows_vectors = build_bows_one_hot_vectors(bow_indices, tokenizer, device)
+    affect_int_orig = affect_int
+    one_hot_bows_affect, affect_int = build_bows_one_hot_vectors_aff(bow_indices_affect, affect_int, tokenizer, device)
+#    print(torch.FloatTensor(one_hot_bows_affect).size())
+    grad_norms = None
+    last = None
+    unpert_discrim_loss = 0
+    loss_in_time = []
+
+    if verbosity_level >= VERBOSE:
+        range_func = trange(length, ascii=True)
+    else:
+        range_func = range(length)
+    count = 0
+    int_score = 0
+    for i in range_func:
+        if count == 3:
+          break
+        # Get past/probs for current output, except for last word
+        # Note that GPT takes 2 inputs: past + current_token
+
+        # run model forward to obtain unperturbed
+        if past is None and output_so_far is not None:
+            last = output_so_far[:, -1:]
+            if output_so_far.shape[1] > 1:
+                _, past, _ = model(output_so_far[:, :-1])
+
+        unpert_logits, unpert_past, unpert_all_hidden = model(output_so_far)
+        unpert_last_hidden = unpert_all_hidden[-1]
+
+        # check if we are abowe grad max length
+        if i >= grad_length:
+            current_stepsize = stepsize * 0
+        else:
+            current_stepsize = stepsize
+
+        # modify the past if necessary
+        if not perturb or num_iterations == 0:
+            pert_past = past
+
+        else:
+            accumulated_hidden = unpert_last_hidden[:, :-1, :]
+            accumulated_hidden = torch.sum(accumulated_hidden, dim=1)
+
+            if past is not None:
+                pert_past, _, grad_norms, loss_this_iter = perturb_past(
+                    past,
+                    model,
+                    last,
+                    affect_weight = affect_weight,
+                    unpert_past=unpert_past,
+                    unpert_logits=unpert_logits,
+                    accumulated_hidden=accumulated_hidden,
+                    grad_norms=grad_norms,
+                    stepsize=current_stepsize,
+                    one_hot_bows_vectors=one_hot_bows_vectors,
+                    one_hot_bows_affect=one_hot_bows_affect,
+                    affect_int = affect_int,
+                    knob = knob,
+                    classifier=classifier,
+                    class_label=class_label,
+                    loss_type=loss_type,
+                    num_iterations=num_iterations,
+                    horizon_length=horizon_length,
+                    window_length=window_length,
+                    decay=decay,
+                    gamma=gamma,
+                    kl_scale=kl_scale,
+                    device=device,
+                    verbosity_level=verbosity_level
+                )
+                loss_in_time.append(loss_this_iter)
+            else:
+                pert_past = past
+
+        pert_logits, past, pert_all_hidden = model(last, past=pert_past)
+        pert_logits = pert_logits[:, -1, :] / temperature  # + SMALL_CONST
+        pert_probs = F.softmax(pert_logits, dim=-1)
+
+        if classifier is not None:
+            ce_loss = torch.nn.CrossEntropyLoss()
+            prediction = classifier(torch.mean(unpert_last_hidden, dim=1))
+            label = torch.tensor([class_label], device=device,
+                                 dtype=torch.long)
+            unpert_discrim_loss = ce_loss(prediction, label)
+            if verbosity_level >= VERBOSE:
+                print(
+                    "unperturbed discrim loss",
+                    unpert_discrim_loss.data.cpu().numpy()
+                )
+        else:
+            unpert_discrim_loss = 0
+
+        # Fuse the modified model and original model
+        if perturb:
+
+            unpert_probs = F.softmax(unpert_logits[:, -1, :], dim=-1)
+
+            pert_probs = ((pert_probs ** gm_scale) * (
+                    unpert_probs ** (1 - gm_scale)))  # + SMALL_CONST
+            pert_probs = top_k_filter(pert_probs, k=top_k,
+                                      probs=True)  # + SMALL_CONST
+
+            # rescale
+            if torch.sum(pert_probs) <= 1:
+                pert_probs = pert_probs / torch.sum(pert_probs)
+
+        else:
+            pert_logits = top_k_filter(pert_logits, k=top_k)  # + SMALL_CONST
+            pert_probs = F.softmax(pert_logits, dim=-1)
+
+        # sample or greedy
+        if sample:
+            last = torch.multinomial(pert_probs, num_samples=1)
+            # print('pert_prob, last ', pert_probs, last)
+
+        else:
+            _, last = torch.topk(pert_probs, k=1, dim=-1)
+
+        # update context/output_so_far appending the new token
+        output_so_far = (
+            last if output_so_far is None
+            else torch.cat((output_so_far, last), dim=1)
+        )
+        if verbosity_level >= REGULAR:
+            print(tokenizer.decode(output_so_far.tolist()[0]))
+        if tokenizer.decode(output_so_far.tolist()[0])[-1] == '.':
+            count = count+1
+        if bow_indices_affect is not None and [output_so_far.tolist()[0][-1]] in bow_indices_affect[0]:
+            int_word = affect_int_orig[bow_indices_affect[0].index([output_so_far.tolist()[0][-1]])]
+            print(tokenizer.decode(output_so_far.tolist()[0][-1]), int_word)
+            int_score = int_score + int_word
+    print("int_score: ", int_score)
+    # print("int.. " , output_so_far.tolist()[0][-1])
+    return output_so_far, unpert_discrim_loss, loss_in_time
+
+
 def full_text_generation(
         model,
         tokenizer,
@@ -143,18 +321,18 @@ def full_text_generation(
 
     loss_type = PPLM_BOW
     if bag_of_words_affect:
-      loss_type = BOW_AFFECT
+        loss_type = BOW_AFFECT
 
-    # unpert_gen_tok_text, _, _ = generate_text_pplm(
-    #     model=model,
-    #     tokenizer=tokenizer,
-    #     context=context,
-    #     device=device,
-    #     length=length,
-    #     sample=sample,
-    #     perturb=False,
-    #     verbosity_level=verbosity_level
-    # )
+    unpert_gen_tok_text, _, _ = generate_text_pplm(
+        model=model,
+        tokenizer=tokenizer,
+        context=context,
+        device=device,
+        length=length,
+        sample=sample,
+        perturb=False,
+        verbosity_level=verbosity_level
+    )
     #
     # if device == 'cuda':
     #     torch.cuda.empty_cache()
@@ -205,42 +383,62 @@ def full_text_generation(
     return None, None, None, None
 
 
-def get_affect_words_and_int(affect_class):
+def build_bows_one_hot_vectors_aff(bow_indices, affect_int, tokenizer, device='cuda'):
+    if bow_indices is None or affect_int is None:
+        return None, None
+
+    one_hot_bows_vectors = []
+    # print(np.array(bow_indices).shape)
+    for single_bow in bow_indices:
+        zipped = [[single_bow[i], affect_int[i]] for i in range(len(single_bow))]
+        single_bow_int = list(filter(lambda x: len(x[0]) <= 1, zipped))
+        single_bow = [single_bow_int[i][0] for i in range(len(single_bow_int)) ]
+        affect_ints = [single_bow_int[i][1] for i in range(len(single_bow_int)) ]
+        # print(single_bow, affect_ints)
+        # print(len(single_bow), len(affect_ints))
+        single_bow = torch.tensor(single_bow).to(device)
+        num_words = single_bow.shape[0]
+        # print(num_words)
+        one_hot_bow = torch.zeros(num_words, tokenizer.vocab_size).to(device)
+        one_hot_bow.scatter_(1, single_bow, 1)
+        one_hot_bows_vectors.append(one_hot_bow)
+    return one_hot_bows_vectors, affect_ints
+
+
+def get_affect_words_and_int(emotion):
     """
     Нужно получить такты, соответствующие эмоциям
-    :param affect_class:
+    :param emotion: конкретная эмоция, такты для который ищем
     :return:
     """
-    emotions = ""
     # filepath = cached_path(emotions)
-    filepath = ''
-    with open(filepath, "r") as f:
-        words = f.read().strip().split("\n")[1:]
+    bag_of_bars = pd.read_excel(BAG_OF_BARS_FILE, index_col=0)
+    bag_of_bars = bag_of_bars.sort_values(by=emotion)
 
-    words = [w.split("\t") for w in words]
+    bars = bag_of_bars.tail(100)
 
-    return [w[0] for w in words if w[1] == affect_class], [float(w[-1]) for w in words if w[1] == affect_class]
+    return list(bars.index), list(bars[emotion].values)
 
 
 def generate(priming_sample):
     topics = [
         'legal']  # ,'military','monsters','politics','positive_words', 'religion', 'science','space','technology']
-    affects = ['fear']  # , 'anger', 'sadness'] #'fear',
+    emotions = ['cheerful']
     knob_vals = [0.8]  # ,0.5,0.7,1]
 
     for topic in topics:
-        for affect in affects:
+        for emotion in emotions:
             for knob in knob_vals:
-                print("topic:", topic, ", affect:", affect, ", knob is:", knob)
+                print("topic:", topic, ", emotion:", emotion, ", knob is:", knob)
                 run_pplm_example(
-                    affect_weight=1,  # it is the convergence rate of affect loss, don't change it :-p
+                    affect_weight=1,  # it is the convergence rate of emotion loss, don't change it :-p
                     knob=knob,  # 0-1, play with it as much as you want
                     priming_sample=priming_sample,
                     num_samples=1,
                     bag_of_words=topic,
-                    bag_of_words_affect=affect,
+                    bag_of_words_affect=emotion,
                     length=50,
-                    stepsize=0.005,  # topic, affect convergence rate
+                    stepsize=0.005,  # topic, emotion convergence rate
                     sample=True,
                     num_iterations=10,
                     window_length=5,
