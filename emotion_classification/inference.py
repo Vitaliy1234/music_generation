@@ -1,17 +1,24 @@
 import os
 
+from operator import add
+
 import numpy as np
 import pandas as pd
+
 import torch
+from torch.autograd import Variable
+import torch.nn.functional as F
 from transformers import GPT2LMHeadModel
 
 from miditok import REMI
 
-from sample import midi_to_text
+from tqdm import trange
 
 
 PPLM_BOW = 1
 BOW_AFFECT = 4
+SMALL_CONST = 1e-15
+BIG_CONST = 1e10
 
 QUIET = 0
 REGULAR = 1
@@ -75,11 +82,17 @@ def run_pplm_example(pretrained_model="gpt2-medium",
     for param in model.parameters():
         param.requires_grad = False
 
+    if uncond:
+        tokenized_cond_text = [tokenizer.vocab['BOS_None']]
+    else:
+        tokenized_cond_text = [tokenizer.vocab['BOS_None']]
+
     unpert_gen_tok_text, pert_gen_tok_texts, _, _ = full_text_generation(
         model=model,
         tokenizer=tokenizer,
         affect_weight=affect_weight,
         knob=knob,
+        context=tokenized_cond_text,
         device=device,
         num_samples=num_samples,
         bag_of_words=bag_of_words,
@@ -148,7 +161,7 @@ def generate_text_pplm(
         output_so_far = context_t
 
     # collect one hot vectors for bags of words
-    one_hot_bows_vectors = build_bows_one_hot_vectors(bow_indices, tokenizer, device)
+    # one_hot_bows_vectors = build_bows_one_hot_vectors(bow_indices, tokenizer, device)
     affect_int_orig = affect_int
     one_hot_bows_affect, affect_int = build_bows_one_hot_vectors_aff(bow_indices_affect, affect_int, tokenizer, device)
 #    print(torch.FloatTensor(one_hot_bows_affect).size())
@@ -197,16 +210,16 @@ def generate_text_pplm(
                     past,
                     model,
                     last,
-                    affect_weight = affect_weight,
+                    affect_weight=affect_weight,
                     unpert_past=unpert_past,
                     unpert_logits=unpert_logits,
                     accumulated_hidden=accumulated_hidden,
                     grad_norms=grad_norms,
                     stepsize=current_stepsize,
-                    one_hot_bows_vectors=one_hot_bows_vectors,
+                    # one_hot_bows_vectors=one_hot_bows_vectors,
                     one_hot_bows_affect=one_hot_bows_affect,
-                    affect_int = affect_int,
-                    knob = knob,
+                    affect_int=affect_int,
+                    knob=knob,
                     classifier=classifier,
                     class_label=class_label,
                     loss_type=loss_type,
@@ -285,6 +298,225 @@ def generate_text_pplm(
     return output_so_far, unpert_discrim_loss, loss_in_time
 
 
+def perturb_past(
+        past,
+        model,
+        last,
+        affect_weight=0.2,
+        unpert_past=None,
+        unpert_logits=None,
+        accumulated_hidden=None,
+        grad_norms=None,
+        stepsize=0.01,
+        one_hot_bows_vectors=None,
+        one_hot_bows_affect=None,
+        affect_int=None,
+        knob=None,
+        classifier=None,
+        class_label=None,
+        loss_type=0,
+        num_iterations=3,
+        horizon_length=1,
+        window_length=0,
+        decay=False,
+        gamma=1.5,
+        kl_scale=0.01,
+        device='cuda',
+        verbosity_level=REGULAR
+):
+    # Generate inital perturbed past
+    grad_accumulator = [
+        (np.zeros(p.shape).astype("float32"))
+        for p in past
+    ]
+
+    if accumulated_hidden is None:
+        accumulated_hidden = 0
+
+    if decay:
+        decay_mask = torch.arange(
+            0.,
+            1.0 + SMALL_CONST,
+            1.0 / (window_length)
+        )[1:]
+    else:
+        decay_mask = 1.0
+
+    # TODO fix this comment (SUMANTH)
+    # Generate a mask is gradient perturbated is based on a past window
+    _, _, _, curr_length, _ = past[0].shape
+
+    if curr_length > window_length and window_length > 0:
+        ones_key_val_shape = (
+                tuple(past[0].shape[:-2])
+                + tuple([window_length])
+                + tuple(past[0].shape[-1:])
+        )
+
+        zeros_key_val_shape = (
+                tuple(past[0].shape[:-2])
+                + tuple([curr_length - window_length])
+                + tuple(past[0].shape[-1:])
+        )
+
+        ones_mask = torch.ones(ones_key_val_shape)
+        ones_mask = decay_mask * ones_mask.permute(0, 1, 2, 4, 3)
+        ones_mask = ones_mask.permute(0, 1, 2, 4, 3)
+
+        window_mask = torch.cat(
+            (ones_mask, torch.zeros(zeros_key_val_shape)),
+            dim=-2
+        ).to(device)
+    else:
+        window_mask = torch.ones_like(past[0]).to(device)
+
+    # accumulate perturbations for num_iterations
+    loss_per_iter = []
+    new_accumulated_hidden = None
+    for i in range(num_iterations):
+        if verbosity_level >= VERBOSE:
+            print("Iteration ", i + 1)
+        curr_perturbation = [
+            to_var(torch.from_numpy(p_), requires_grad=True, device=device)
+            for p_ in grad_accumulator
+        ]
+
+        # Compute hidden using perturbed past
+        perturbed_past = list(map(add, past, curr_perturbation))
+        _, _, _, curr_length, _ = curr_perturbation[0].shape
+        all_logits, _, all_hidden = model(last, past=perturbed_past)
+        hidden = all_hidden[-1]
+        new_accumulated_hidden = accumulated_hidden + torch.sum(
+            hidden,
+            dim=1
+        ).detach()
+        # TODO: Check the layer-norm consistency of this with trained discriminator (Sumanth)
+        logits = all_logits[:, -1, :]
+        probs = F.softmax(logits, dim=-1)
+
+        loss = 0.0
+        loss_list = []
+        if loss_type == PPLM_BOW or loss_type == BOW_AFFECT:
+            for one_hot_bow in one_hot_bows_vectors:
+                bow_logits = torch.mm(probs, torch.t(one_hot_bow))
+                # print(type(bow_logits))
+                bow_loss = -torch.log(torch.sum(bow_logits))
+                # print(bow_loss)
+                loss += bow_loss
+                loss_list.append(bow_loss)
+            if loss_type == BOW_AFFECT:
+                for one_hot_bow in one_hot_bows_affect:
+                    bow_logits = torch.mm(probs, torch.t(one_hot_bow))
+                    # print(bow_logits.size(), torch.FloatTensor(affect_int).size())
+                    bow_loss = -torch.log(torch.matmul(bow_logits, torch.t(
+                        torch.FloatTensor(gaussian(affect_int, knob, .1)).to(
+                            device))))  # -torch.log(torch.sum(bow_logits))#
+                    # print(bow_loss)
+
+                    loss += affect_weight * bow_loss[0]
+                    loss_list.append(bow_loss)
+            if verbosity_level >= VERY_VERBOSE:
+                print(" pplm_bow_loss:", loss.data.cpu().numpy())
+
+        kl_loss = 0.0
+        if kl_scale > 0.0:
+            unpert_probs = F.softmax(unpert_logits[:, -1, :], dim=-1)
+            unpert_probs = (
+                    unpert_probs + SMALL_CONST *
+                    (unpert_probs <= SMALL_CONST).float().to(device).detach()
+            )
+            correction = SMALL_CONST * (probs <= SMALL_CONST).float().to(
+                device).detach()
+            corrected_probs = probs + correction.detach()
+            kl_loss = kl_scale * (
+                (corrected_probs * (corrected_probs / unpert_probs).log()).sum()
+            )
+            if verbosity_level >= VERY_VERBOSE:
+                print(' kl_loss', kl_loss.data.cpu().numpy())
+            loss += kl_loss
+
+        loss_per_iter.append(loss.data.cpu().numpy())
+        if verbosity_level >= VERBOSE:
+            print(' pplm_loss', (loss - kl_loss).data.cpu().numpy())
+
+        # compute gradients
+        loss.backward()
+
+        # calculate gradient norms
+        if grad_norms is not None and loss_type == PPLM_BOW:
+            grad_norms = [
+                torch.max(grad_norms[index], torch.norm(p_.grad * window_mask))
+                for index, p_ in enumerate(curr_perturbation)
+            ]
+        else:
+            grad_norms = [
+                (torch.norm(p_.grad * window_mask) + SMALL_CONST)
+                for index, p_ in enumerate(curr_perturbation)
+            ]
+
+        # normalize gradients
+        grad = [
+            -stepsize *
+            (p_.grad * window_mask / grad_norms[
+                index] ** gamma).data.cpu().numpy()
+            for index, p_ in enumerate(curr_perturbation)
+        ]
+
+        # accumulate gradient
+        grad_accumulator = list(map(add, grad, grad_accumulator))
+
+        # reset gradients, just to make sure
+        for p_ in curr_perturbation:
+            p_.grad.data.zero_()
+
+        # removing past from the graph
+        new_past = []
+        for p_ in past:
+            new_past.append(p_.detach())
+        past = new_past
+
+    # apply the accumulated perturbations to the past
+    grad_accumulator = [
+        to_var(torch.from_numpy(p_), requires_grad=True, device=device)
+        for p_ in grad_accumulator
+    ]
+    pert_past = list(map(add, past, grad_accumulator))
+
+    return pert_past, new_accumulated_hidden, grad_norms, loss_per_iter
+
+
+def to_var(x, requires_grad=False, volatile=False, device='cuda'):
+    if torch.cuda.is_available() and device == 'cuda':
+        x = x.cuda()
+    elif device != 'cuda':
+        x = x.to(device)
+    return Variable(x, requires_grad=requires_grad, volatile=volatile)
+
+
+def gaussian(x, mu, sig):
+    x = np.array(x)
+    return list(np.exp(-0.5*((x-mu)/sig)**2)/(sig*(2*np.pi)**0.5))
+
+
+def top_k_filter(logits, k, probs=False):
+    """
+    Masks everything but the k top entries as -infinity (1e10).
+    Used to mask logits such that e^-infinity -> 0 won't contribute to the
+    sum of the denominator.
+    """
+    if k == 0:
+        return logits
+    else:
+        values = torch.topk(logits, k)[0]
+        batch_mins = values[:, -1].view(-1, 1).expand_as(logits)
+        if probs:
+            return torch.where(logits < batch_mins,
+                               torch.ones_like(logits) * 0.0, logits)
+        return torch.where(logits < batch_mins,
+                           torch.ones_like(logits) * -BIG_CONST,
+                           logits)
+
+
 def full_text_generation(
         model,
         tokenizer,
@@ -313,11 +545,18 @@ def full_text_generation(
         **kwargs
 ):
     bow_indices = []
-    bow_indices_affect = []
+    bob_indices_affect = []  # bob - Bag Of Bars
 
     if bag_of_words_affect:
-        affect_words, affect_int = get_affect_words_and_int(bag_of_words_affect)
-        bow_indices_affect.append([tokenizer.encode(word.strip(), add_prefix_space=True, add_special_tokens=False) for word in affect_words])
+        affect_bars, affect_int = get_affect_words_and_int(bag_of_words_affect)
+        tok_vocab = {key.lower(): val for key, val in tokenizer.vocab.items()}
+
+        for bar in affect_bars:
+            bar = bar[-1] + bar[:-1]
+            bob_indices_affect.append([tok_vocab[item] for item in bar.strip().split(' ')])
+
+        # bob_indices_affect.append([tok_vocab[bar] for bar in affect_bars])
+        # bob_indices_affect.append([tokenizer.encode(word.strip(), add_prefix_space=True, add_special_tokens=False) for word in affect_words])
 
     loss_type = PPLM_BOW
     if bag_of_words_affect:
@@ -350,7 +589,7 @@ def full_text_generation(
     #         device=device,
     #         perturb=True,
     #         bow_indices=bow_indices,
-    #         bow_indices_affect=bow_indices_affect,
+    #         bob_indices_affect=bob_indices_affect,
     #         affect_int = affect_int,
     #         knob = knob,
     #         classifier=classifier,
