@@ -8,7 +8,7 @@ import pandas as pd
 import torch
 from torch.autograd import Variable
 import torch.nn.functional as F
-from transformers import GPT2LMHeadModel
+from transformers import GPT2LMHeadModel, GPT2Config
 
 from miditok import REMI
 
@@ -117,7 +117,10 @@ def run_pplm_example(pretrained_model="gpt2-medium",
 
 def load_model():
     tokenizer = REMI()
-    model = torch.jit.load(MODEL_FILE)
+    model_path = os.path.join(MODEL_FILE)
+    model = GPT2LMHeadModel.from_pretrained(model_path,
+                                            output_hidden_states=True
+                                            )
 
     return model, tokenizer
 
@@ -137,7 +140,7 @@ def generate_text_pplm(
         classifier=None,
         class_label=None,
         loss_type=0,
-        length=100,
+        length=300,
         stepsize=0.02,
         temperature=1.0,
         top_k=10,
@@ -177,8 +180,9 @@ def generate_text_pplm(
     count = 0
     int_score = 0
     for i in range_func:
-        if count == 3:
-          break
+    # for i in range(length):
+        # if count == 3:
+        #   break
         # Get past/probs for current output, except for last word
         # Note that GPT takes 2 inputs: past + current_token
 
@@ -188,7 +192,10 @@ def generate_text_pplm(
             if output_so_far.shape[1] > 1:
                 _, past, _ = model(output_so_far[:, :-1])
 
-        unpert_logits, unpert_past, unpert_all_hidden = model(output_so_far)
+        model_out = model(output_so_far)
+        unpert_logits = model_out['logits']
+        unpert_past = model_out['past_key_values']
+        unpert_all_hidden = model_out['hidden_states']
         unpert_last_hidden = unpert_all_hidden[-1]
 
         # check if we are abowe grad max length
@@ -236,7 +243,10 @@ def generate_text_pplm(
             else:
                 pert_past = past
 
-        pert_logits, past, pert_all_hidden = model(last, past=pert_past)
+        model_out = model(last, past_key_values=pert_past)
+        pert_logits = model_out['logits']
+        past = model_out['past_key_values']
+        pert_all_hidden = model_out['hidden_states']
         pert_logits = pert_logits[:, -1, :] / temperature  # + SMALL_CONST
         pert_probs = F.softmax(pert_logits, dim=-1)
 
@@ -285,13 +295,24 @@ def generate_text_pplm(
             last if output_so_far is None
             else torch.cat((output_so_far, last), dim=1)
         )
-        if verbosity_level >= REGULAR:
-            print(tokenizer.decode(output_so_far.tolist()[0]))
-        if tokenizer.decode(output_so_far.tolist()[0])[-1] == '.':
-            count = count+1
+        # if verbosity_level >= REGULAR:
+        if True:
+            # print(tokenizer.decode(output_so_far.tolist()[0]))
+            # print(output_so_far)
+            reversed_vocab = {ind: token for token, ind in zip(tokenizer.vocab.keys(), tokenizer.vocab.values())}
+            items_seq = [reversed_vocab[int(token)] for token in output_so_far[0]]
+            print(items_seq)
+            if len(output_so_far[0]) > 20:
+                print('saved in output')
+                print(len(output_so_far[0]))
+                midi_file = tokenizer.tokens_to_midi(tokens=output_so_far.cpu())
+                midi_file.dump('output.mid')
+
+        # if tokenizer.decode(output_so_far.tolist()[0])[-1] == '.':
+        #     count = count+1
         if bow_indices_affect is not None and [output_so_far.tolist()[0][-1]] in bow_indices_affect[0]:
             int_word = affect_int_orig[bow_indices_affect[0].index([output_so_far.tolist()[0][-1]])]
-            print(tokenizer.decode(output_so_far.tolist()[0][-1]), int_word)
+            # print(tokenizer.decode(output_so_far.tolist()[0][-1]), int_word)
             int_score = int_score + int_word
     print("int_score: ", int_score)
     # print("int.. " , output_so_far.tolist()[0][-1])
@@ -384,7 +405,11 @@ def perturb_past(
         # Compute hidden using perturbed past
         perturbed_past = list(map(add, past, curr_perturbation))
         _, _, _, curr_length, _ = curr_perturbation[0].shape
-        all_logits, _, all_hidden = model(last, past=perturbed_past)
+
+        model_out = model(last, past=perturbed_past)
+        all_logits = model_out['logits']
+        all_hidden = model_out['hidden_states']
+
         hidden = all_hidden[-1]
         new_accumulated_hidden = accumulated_hidden + torch.sum(
             hidden,
@@ -662,7 +687,7 @@ def get_affect_words_and_int(emotion):
 def generate(priming_sample):
     topics = [
         'legal']  # ,'military','monsters','politics','positive_words', 'religion', 'science','space','technology']
-    emotions = ['cheerful']
+    emotions = ['tense']
     knob_vals = [0.8]  # ,0.5,0.7,1]
 
     for topic in topics:
@@ -676,7 +701,7 @@ def generate(priming_sample):
                     num_samples=1,
                     bag_of_words=topic,
                     bag_of_words_affect=emotion,
-                    length=50,
+                    length=100,
                     stepsize=0.005,  # topic, emotion convergence rate
                     sample=True,
                     num_iterations=10,
@@ -684,7 +709,7 @@ def generate(priming_sample):
                     gamma=1.5,
                     gm_scale=0.95,
                     kl_scale=0.01,
-                    verbosity='quiet'
+                    verbosity='very_verbose'
                 )
 
 

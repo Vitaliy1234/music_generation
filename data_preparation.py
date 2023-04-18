@@ -128,10 +128,10 @@ def preprocess_bar(bar):
 
         elif isinstance(elem_measure, music21.note.Note):
             if elem_measure.isRest:
-                bar_txt.append(f'{TIME_SHIFT}={float(elem_measure.duration.quarterLength) * 4}')
+                bar_txt.append(f'{TIME_SHIFT}={float(elem_measure.duration.quarterLength) * 16}')
             else:
                 note_list = [f'{NOTE_ON}={elem_measure.pitch.midi}',
-                             f'{TIME_SHIFT}={float(elem_measure.duration.quarterLength) * 4}',
+                             f'{TIME_SHIFT}={float(elem_measure.duration.quarterLength) * 16}',
                              f'{NOTE_OFF}={elem_measure.pitch.midi}']
 
                 cur_elem_duration = elem_measure.duration.quarterLength
@@ -144,11 +144,11 @@ def preprocess_bar(bar):
                         prev_time_shift = bar_txt.pop()
 
                         bar_txt.append(f'{TIME_SHIFT}='
-                                       f'{shift_duration * 4 + float(prev_time_shift.split("=")[1])}')
+                                       f'{shift_duration * 16 + float(prev_time_shift.split("=")[1])}')
                         bar_txt.append(note_off_token)
                     else:
                         bar_txt.append(f'{TIME_SHIFT}='
-                                       f'{shift_duration * 4}')
+                                       f'{shift_duration * 16}')
 
                     prev_duration += shift_duration
 
