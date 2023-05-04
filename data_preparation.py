@@ -10,19 +10,21 @@ from helpers import logging
 logger = logging.create_logger("data_preparation")
 
 
-BAR_START = 'BAR_START'
-BAR_END = 'BAR_END'
-TRACK_START = 'TRACK_START'
-TRACK_END = 'TRACK_END'
-NOTE_ON = 'NOTE_ON'
-NOTE_OFF = 'NOTE_OFF'
-TIME_SHIFT = 'TIME_DELTA'
-INSTRUMENT = 'INST'
+BAR_START = 'BAR=0'
+BAR_END = 'BAR_END=0'
+TRACK_START = 'TRACK=10'
+TRACK_END = 'TRACK_END=0'
+NOTE_ON = 'NOTE_ONSET'
+# NOTE_OFF = 'NOTE_OFF'
+TIME_SHIFT = 'TIME_ABSOLUTE'
+NOTE_DURATION = 'NOTE_DURATION'
+INSTRUMENT = 'INSTRUMENT'
+VELOCITY = 'VELOCITY_LEVEL'
 
 INSTR_DICT = {}
 
-PIECE_START = 'PIECE_START'
-PIECE_END = 'PIECE_END'
+PIECE_START = 'PIECE_START=0'
+# PIECE_END = 'PIECE_END'
 
 
 def get_bach_chorales():
@@ -99,7 +101,8 @@ def preprocess_track(track, track_index, meta_info):
             cur_bar_time_sig = meta_info['Beat count']
             # case when there is empty bar
             if not cur_bar_info['bar_txt']:
-                track_txt.append(f'{TIME_SHIFT}={cur_bar_time_sig * 4}')
+                # track_txt.append(f'{TIME_SHIFT}={cur_bar_time_sig * 4}')
+                pass
             else:
                 track_txt.extend(cur_bar_info['bar_txt'])
 
@@ -115,7 +118,7 @@ def preprocess_bar(bar):
     bar_txt = []
     bar_dict = {}
 
-    prev_offset = 0.0
+    # prev_offset = 0.0
     prev_duration = 0.0
     # read measure
     for elem_measure in bar:
@@ -127,37 +130,39 @@ def preprocess_bar(bar):
             bar_dict['Time signature'] = elem_measure
 
         elif isinstance(elem_measure, music21.note.Note):
-            if elem_measure.isRest:
-                bar_txt.append(f'{TIME_SHIFT}={float(elem_measure.duration.quarterLength) * 16}')
-            else:
-                note_list = [f'{NOTE_ON}={elem_measure.pitch.midi}',
-                             f'{TIME_SHIFT}={float(elem_measure.duration.quarterLength) * 16}',
-                             f'{NOTE_OFF}={elem_measure.pitch.midi}']
+            note_list = [f'{VELOCITY}={elem_measure.volume.velocity}',
+                         f'{NOTE_ON}={elem_measure.pitch.midi}',
+                         f'{NOTE_DURATION}={float(elem_measure.duration.quarterLength) * 8}',
+                         ]
 
-                cur_elem_duration = elem_measure.duration.quarterLength
+            cur_elem_duration = elem_measure.duration.quarterLength
 
-                if elem_measure.offset - prev_offset > prev_duration:
-                    shift_duration = elem_measure.offset - prev_duration - prev_offset
+            # if elem_measure.offset - prev_offset > prev_duration:
+            #     shift_duration = elem_measure.offset - prev_duration - prev_offset
+            #
+            #     if bar_txt and False:
+            #         note_off_token = bar_txt.pop()
+            #         prev_time_shift = bar_txt.pop()
+            #
+            #         bar_txt.append(f'{TIME_SHIFT}='
+            #                        f'{shift_duration * 8 + float(prev_time_shift.split("=")[1])}')
+            #         bar_txt.append(note_off_token)
+            #     else:
+            #         bar_txt.append(f'{TIME_SHIFT}='
+            #                        f'{shift_duration * 8}')
+            #
+            #     prev_duration += shift_duration
 
-                    if bar_txt and False:
-                        note_off_token = bar_txt.pop()
-                        prev_time_shift = bar_txt.pop()
+            bar_txt.extend(note_list)
+            prev_duration += cur_elem_duration
+            # prev_offset = elem_measure.offset
 
-                        bar_txt.append(f'{TIME_SHIFT}='
-                                       f'{shift_duration * 16 + float(prev_time_shift.split("=")[1])}')
-                        bar_txt.append(note_off_token)
-                    else:
-                        bar_txt.append(f'{TIME_SHIFT}='
-                                       f'{shift_duration * 16}')
-
-                    prev_duration += shift_duration
-
-                bar_txt.extend(note_list)
-                prev_duration += cur_elem_duration
-                prev_offset = elem_measure.offset
+        elif isinstance(elem_measure, music21.note.Rest):
+            bar_txt.append(f'{TIME_SHIFT}={float(elem_measure.duration.quarterLength) * 8}')
 
         else:
             pass
+            # print(elem_measure)
 
     bar_dict['bar_txt'] = bar_txt
     return bar_dict
@@ -232,6 +237,12 @@ def get_text_repr_filelist(file_list):
 
 
 def transpose_text_midi(text_midi, transpositions):
+    """
+    Transpose midi in several tonalities
+    :param text_midi: text representation of midi
+    :param transpositions: offsets
+    :return:
+    """
     result = {}
 
     for transposition in transpositions:
@@ -249,6 +260,24 @@ def transpose_text_midi(text_midi, transpositions):
     return np.array(list(result.values()))
 
 
+def augment_durations(text_midi, augmentations):
+    result = {}
+
+    for transposition in augmentations:
+        result[transposition] = []
+        for token in text_midi.split(' '):
+            if 'TIME_DELTA' in token:
+                cur_pitch_value = float(token.split('=')[1])
+                cur_token_without_value = token.split('=')[0]
+                result[transposition].append(f'{cur_token_without_value}={cur_pitch_value * transposition}')
+            else:
+                result[transposition].append(token)
+
+        result[transposition] = ' '.join(result[transposition])
+
+    return np.array(list(result.values()))
+
+
 def to_interval_repr(text_midi):
     pass
 
@@ -258,8 +287,9 @@ if __name__ == '__main__':
     #              run_id='0007',
     #              music_name='cello')
 
-    text_repr = extract_notes(['data/99_basic_pitch.mid'])
+    text_repr = extract_notes(['data/test.mid'])
+    print(text_repr)
 
-    with open('text_repr.txt', 'w') as hfile:
-        for piece in text_repr:
-            hfile.write(piece + '\n')
+    # with open('text_repr.txt', 'w') as hfile:
+    #     for piece in text_repr:
+    #         hfile.write(piece + '\n')
